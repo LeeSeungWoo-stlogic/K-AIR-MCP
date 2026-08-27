@@ -2,6 +2,9 @@
 .env.*
 !.env.example
 
+# vendor Tibero JDBC (라이선스 파일, Git 제외)
+driver/*.jar
+
 __pycache__/
 *.py[cod]
 .venv/

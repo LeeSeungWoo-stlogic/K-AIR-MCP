@@ -13,7 +13,7 @@
 - HTTP는 Streamable HTTP(` /mcp`) + `X-Api-Key`. stdio는 같은 PC IDE용입니다.
 - AI는 MCP URL과 API Key만 압니다. DB 비밀번호·robo 주소는 도구 결과에 없습니다.
 
-하지 않는 일: 자유 SQL, DML/DDL, dump/보내기, 운영 Tibero, `t2s`·`argus_catalog` 데이터 조회, 엔진마다 MCP를 나누기.
+하지 않는 일: 자유 SQL, DML/DDL, dump/보내기, `t2s`·`argus_catalog` 데이터 조회, 엔진마다 MCP를 나누기.
 
 ## 도구
 
@@ -38,30 +38,32 @@
 
 엔진이 없거나 모르는 값이면 목록에서 뺍니다. Tibero 표가 Postgres 실존 표와 이름이 같아도 섞지 않습니다.
 
-로컬에는 Postgres만 있습니다. Tibero 접속·JDBC가 없으면 카탈로그 Tibero 소스는 목록에 안 나옵니다. JDBC JAR는 이미지에 넣지 않습니다.
+도구는 카탈로그 `sources[].engine`을 먼저 읽고, 그 엔진 원천만 엽니다. Postgres 마트가 없어도 Tibero만으로 기동합니다. JDBC JAR는 이미지에 넣지 않고 `driver/tibero-jdbc.jar`를 mount합니다.
 
 ## 구성
 
 ```text
 app/                 FastMCP 서버 (stdio / Streamable HTTP)
+driver/              Tibero JDBC (`tibero-jdbc.jar`, Git 제외)
 tests/               단위·계약 테스트
 docker-compose.yml   네트워크용 http :8110
 mcp.cursor.example.json       같은 PC stdio
 mcp.cursor.http.example.json  다른 PC HTTP
 ```
 
-전제: `robo-meta-api`와 `kair-metadata-platform_control-plane` 네트워크. 데이터면은 로컬 `kair-postgis-16`(호스트 5434). 포털·OASIS·운영 Tibero는 이 저장소 범위가 아닙니다.
+전제: `robo-meta-api`와 `kair-metadata-platform_control-plane` 네트워크. 분석 마트는 선택(`MCP_PG_*`, 로컬은 호스트 5434). 수집 Tibero는 `driver/README.md`와 `MCP_TB_*`. 포털·OASIS는 이 저장소 범위가 아닙니다.
 
 ## 실행
 
 ```powershell
 copy .env.example .env
-# MCP_API_KEYS · MCP_PG_* 실제 값만 채움. 따옴표 넣지 않음
+# MCP_API_KEYS 필수. 따옴표 넣지 않음
+# 분석 마트가 있으면 MCP_PG_* , Tibero면 driver/tibero-jdbc.jar 와 MCP_TB_*
 docker compose up -d --build
 curl.exe -fsS http://127.0.0.1:8110/health
 ```
 
-헬스: `{"status":"ok","server":"kair-mcp-query","transport":"streamable-http","engines":["postgres"]}`
+헬스 `engines`는 실제로 열린 원천만 넣습니다. Tibero만 있으면 `["tibero"]`입니다.
 
 같은 PC CLI(stdio, 기본):
 
@@ -114,10 +116,11 @@ python -m app.main --transport http
 | 변수 | 역할 |
 | --- | --- |
 | `MCP_API_KEYS` | HTTP `X-Api-Key`. 로컬 스모크 키. 포털 `dh_`·`tm_po_api_key`가 아님 |
-| `MCP_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` | 마트 SELECT 계정. 기본 호스트 `host.docker.internal`, 포트 `5434` |
+| `MCP_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` | 분석 마트. 없으면 카탈로그 postgres 소스만 빠지고 기동은 유지 |
 | `ROBO_META_URL` | `POST /meta/catalog`. 기본 `http://robo-meta-api:8100` |
 | `MCP_ROW_LIMIT` | 행 상한. 서버가 200으로 자름 |
-| `MCP_TB_*` | 수집 Tibero. 접속이 있을 때만 |
+| `MCP_TB_HOST` / `PORT` / `SID` / `USER` / `PASSWORD` | 수집 Tibero thin(`host:port:SID`). 비밀번호는 `.env`에만 |
+| `MCP_TB_JDBC_JAR` | 컨테이너 안 JAR. compose 기본 `/opt/tibero/jdbc/tibero7-jdbc.jar`. 호스트 파일은 `driver/tibero-jdbc.jar` |
 
 접속 정본은 OA에서 `SourceDbConn`입니다. 로컬은 env/CLI입니다.
 
@@ -131,7 +134,7 @@ python -m pytest tests -q
 
 | 항목 | 설명 | 상태 |
 | --- | --- | --- |
-| **Tibero 실행** | 방언(`FETCH FIRST`)·엔진 분기는 있음. JDBC 접속은 없음 | 수집 SID·JAR가 오면 이음 |
+| **Tibero 실행** | 카탈로그 engine 확인 후 JDBC thin으로 같은 조회 도구를 탄다 | `driver/tibero-jdbc.jar` + `MCP_TB_*` |
 | **포털 키·감사** | `tm_po_api_key` / `th_po_api_call` / 등급·활용신청 | 미구현. 로컬 키는 폐기 대상 |
 | **자유 SQL** | Gemini 피드백의 `execute_read_only_sql` | 넣지 않음 |
 | **행 상한 1000** | Gemini 피드백 | 적용 안 함. 200 유지 |

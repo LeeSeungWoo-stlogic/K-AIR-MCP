@@ -58,6 +58,23 @@ def test_assemble_sum_requires_column():
     raise AssertionError("sum without column must fail")
 
 
+def test_tibero_filters_use_jdbc_placeholders():
+    from app.filters import Filter
+
+    sql, params = sqlutil.assemble_select_bound(
+        "RWIS",
+        "T",
+        ["A"],
+        [Filter(column="A", op="eq", value="x")],
+        [],
+        5,
+        "tibero",
+    )
+    assert "?" in sql and "%s" not in sql
+    assert sql.endswith("FETCH FIRST 5 ROWS ONLY")
+    assert params == ("x",)
+
+
 def test_tibero_uses_fetch_first():
     sql = sqlutil.assemble_select("RWIS", "RDITAG_TB", ["TAGSN"], 20, "tibero")
     assert sql == 'SELECT "TAGSN" FROM "RWIS"."RDITAG_TB" FETCH FIRST 20 ROWS ONLY'

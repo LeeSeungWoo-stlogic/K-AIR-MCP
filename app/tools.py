@@ -8,6 +8,7 @@ from psycopg_pool import AsyncConnectionPool
 from . import catalog_client, filters, intersect, pg_store, sqlutil, tb_store
 from .engine import POSTGRES, TIBERO
 from .settings import Settings
+from .tb_store import TiberoError
 
 log = logging.getLogger("kair-mcp-query")
 
@@ -16,13 +17,26 @@ class QueryError(ValueError):
     pass
 
 
-async def load_allowed(settings: Settings, pool: AsyncConnectionPool) -> list[intersect.AllowedTable]:
+async def load_allowed(
+    settings: Settings,
+    pool: AsyncConnectionPool | None,
+) -> list[intersect.AllowedTable]:
     catalog = await catalog_client.fetch_catalog(settings.robo_meta_url)
-    pg_tables, pg_columns = await pg_store.list_pg_inventory(pool)
-    inventories = {
-        POSTGRES: intersect.EngineInventory(tables=pg_tables, columns=pg_columns),
-        TIBERO: await tb_store.list_tb_inventory(settings),
-    }
+    needed = intersect.catalog_engines(catalog)
+    inventories: dict[str, intersect.EngineInventory] = {}
+    if POSTGRES in needed:
+        if pool is None:
+            log.warning("카탈로그에 postgres 소스가 있으나 분석 Postgres 원천이 없습니다")
+            inventories[POSTGRES] = intersect.EngineInventory(tables=set(), columns={})
+        else:
+            pg_tables, pg_columns = await pg_store.list_pg_inventory(pool)
+            inventories[POSTGRES] = intersect.EngineInventory(tables=pg_tables, columns=pg_columns)
+    if TIBERO in needed:
+        owners = intersect.catalog_schemas(catalog, TIBERO)
+        try:
+            inventories[TIBERO] = await tb_store.list_tb_inventory(settings, owners)
+        except TiberoError as exc:
+            raise QueryError(str(exc)) from exc
     return intersect.intersect_catalog(catalog, inventories)
 
 
@@ -37,7 +51,7 @@ def _table_ref(item: intersect.AllowedTable) -> dict[str, str]:
 
 async def list_tables(
     settings: Settings,
-    pool: AsyncConnectionPool,
+    pool: AsyncConnectionPool | None,
     schema_name: str | None = None,
 ) -> dict:
     allowed = await load_allowed(settings, pool)
@@ -55,7 +69,7 @@ async def list_tables(
 
 async def _allowed_table(
     settings: Settings,
-    pool: AsyncConnectionPool,
+    pool: AsyncConnectionPool | None,
     args: dict[str, Any],
 ) -> intersect.AllowedTable:
     source_name = str(args.get("source_name") or "").strip()
@@ -74,31 +88,41 @@ async def _allowed_table(
 
 async def _column_comments(
     settings: Settings,
-    pool: AsyncConnectionPool,
+    pool: AsyncConnectionPool | None,
     table: intersect.AllowedTable,
 ) -> dict[str, str]:
     if table.engine == POSTGRES:
+        if pool is None:
+            raise QueryError("분석 Postgres 원천이 없습니다")
         return await pg_store.column_comments(pool, table.physical_schema, table.physical_table)
     if table.engine == TIBERO:
-        return await tb_store.column_comments(settings, table.physical_schema, table.physical_table)
+        try:
+            return await tb_store.column_comments(settings, table.physical_schema, table.physical_table)
+        except TiberoError as exc:
+            raise QueryError(str(exc)) from exc
     raise QueryError(f"지원하지 않는 engine 입니다: {table.engine}")
 
 
 async def _fetch_rows(
     settings: Settings,
-    pool: AsyncConnectionPool,
+    pool: AsyncConnectionPool | None,
     table: intersect.AllowedTable,
     sql: str,
     params: tuple = (),
 ) -> list[dict]:
     if table.engine == POSTGRES:
+        if pool is None:
+            raise QueryError("분석 Postgres 원천이 없습니다")
         return await pg_store.fetch_rows(pool, sql, params)
     if table.engine == TIBERO:
-        return await tb_store.fetch_rows(settings, sql, params)
+        try:
+            return await tb_store.fetch_rows(settings, sql, params)
+        except TiberoError as exc:
+            raise QueryError(str(exc)) from exc
     raise QueryError(f"지원하지 않는 engine 입니다: {table.engine}")
 
 
-async def describe_table(settings: Settings, pool: AsyncConnectionPool, args: dict[str, Any]) -> dict:
+async def describe_table(settings: Settings, pool: AsyncConnectionPool | None, args: dict[str, Any]) -> dict:
     table = await _allowed_table(settings, pool, args)
     catalog = await catalog_client.fetch_catalog(settings.robo_meta_url)
     catalog_table = intersect.find_catalog_table(
@@ -127,7 +151,7 @@ async def describe_table(settings: Settings, pool: AsyncConnectionPool, args: di
     return {**_table_ref(table), "columns": columns}
 
 
-async def get_distinct_values(settings: Settings, pool: AsyncConnectionPool, args: dict[str, Any]) -> dict:
+async def get_distinct_values(settings: Settings, pool: AsyncConnectionPool | None, args: dict[str, Any]) -> dict:
     table = await _allowed_table(settings, pool, args)
     column = str(args.get("column_name") or args.get("column") or "").strip()
     if not column:
@@ -156,7 +180,7 @@ async def get_distinct_values(settings: Settings, pool: AsyncConnectionPool, arg
     }
 
 
-async def query_table(settings: Settings, pool: AsyncConnectionPool, args: dict[str, Any]) -> dict:
+async def query_table(settings: Settings, pool: AsyncConnectionPool | None, args: dict[str, Any]) -> dict:
     table = await _allowed_table(settings, pool, args)
     requested = args.get("columns")
     if requested is None:
@@ -202,7 +226,7 @@ async def query_table(settings: Settings, pool: AsyncConnectionPool, args: dict[
     }
 
 
-async def aggregate_table(settings: Settings, pool: AsyncConnectionPool, args: dict[str, Any]) -> dict:
+async def aggregate_table(settings: Settings, pool: AsyncConnectionPool | None, args: dict[str, Any]) -> dict:
     table = await _allowed_table(settings, pool, args)
     func = str(args.get("func") or "").strip().lower()
     raw_column = args.get("column")

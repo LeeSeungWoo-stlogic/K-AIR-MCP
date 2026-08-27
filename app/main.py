@@ -8,14 +8,15 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
+import psycopg
 from psycopg_pool import AsyncConnectionPool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import tools
+from . import tb_store, tools
 from .auth import key_ok
-from .engine import POSTGRES
+from .engine import POSTGRES, TIBERO
 from .cli import parse_args
 from .runtime import RT
 from .settings import SettingsError, load_settings
@@ -42,9 +43,18 @@ mcp = FastMCP(
 
 
 def _runtime():
-    if RT.settings is None or RT.pool is None:
+    if RT.settings is None:
         raise RuntimeError("MCP runtime is not ready")
     return RT.settings, RT.pool
+
+
+def _health_engines() -> list[str]:
+    engines: list[str] = []
+    if RT.pool is not None:
+        engines.append(POSTGRES)
+    if RT.settings is not None and tb_store.is_configured(RT.settings):
+        engines.append(TIBERO)
+    return engines
 
 
 @mcp.tool()
@@ -149,7 +159,7 @@ async def health(_request: Request) -> Response:
             "status": "ok",
             "server": "kair-mcp-query",
             "transport": "streamable-http",
-            "engines": [POSTGRES],
+            "engines": _health_engines(),
         }
     )
 
@@ -170,21 +180,48 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-async def _open_runtime() -> AsyncConnectionPool:
+async def _open_pg_pool(settings) -> AsyncConnectionPool | None:
+    if not settings.pg_configured:
+        return None
+    probe = None
+    try:
+        probe = await asyncio.wait_for(
+            psycopg.AsyncConnection.connect(settings.pg_conninfo, connect_timeout=3),
+            timeout=5,
+        )
+        await probe.execute("SELECT 1")
+    except Exception as exc:
+        log.warning("분석 Postgres를 열지 못했습니다. 카탈로그 postgres 소스는 빠집니다: %s", exc)
+        return None
+    finally:
+        if probe is not None:
+            await probe.close()
+
+    pool = AsyncConnectionPool(conninfo=settings.pg_conninfo, min_size=1, max_size=4, open=False)
+    try:
+        await pool.open()
+        return pool
+    except Exception as exc:
+        log.warning("분석 Postgres 풀을 열지 못했습니다. 카탈로그 postgres 소스는 빠집니다: %s", exc)
+        await pool.close()
+        return None
+
+
+async def _open_runtime() -> AsyncConnectionPool | None:
     try:
         settings = load_settings()
     except SettingsError as exc:
         raise SystemExit(str(exc)) from exc
-    pool = AsyncConnectionPool(conninfo=settings.pg_conninfo, min_size=1, max_size=4, open=False)
-    await pool.open()
+    if not settings.pg_configured and not settings.tb_configured:
+        raise SystemExit("MCP_PG_* 또는 MCP_TB_* 중 하나는 필요합니다")
+    pool = await _open_pg_pool(settings)
     RT.settings = settings
     RT.pool = pool
     log.info(
-        "mcp ready robo=%s pg=%s:%s/%s",
+        "mcp ready robo=%s pg=%s tb=%s",
         settings.robo_meta_url,
-        settings.pg_host,
-        settings.pg_port,
-        settings.pg_db,
+        f"{settings.pg_host}:{settings.pg_port}/{settings.pg_db}" if pool else "off",
+        f"{settings.tb_host}:{settings.tb_port}/{settings.tb_sid}" if settings.tb_configured else "off",
     )
     return pool
 
@@ -197,7 +234,8 @@ async def serve_http() -> None:
         config = uvicorn.Config(app, host=mcp.settings.host, port=mcp.settings.port, log_level="info")
         await uvicorn.Server(config).serve()
     finally:
-        await pool.close()
+        if pool is not None:
+            await pool.close()
         RT.pool = None
         RT.settings = None
 
@@ -207,7 +245,8 @@ async def serve_stdio() -> None:
     try:
         await mcp.run_stdio_async()
     finally:
-        await pool.close()
+        if pool is not None:
+            await pool.close()
         RT.pool = None
         RT.settings = None
 
