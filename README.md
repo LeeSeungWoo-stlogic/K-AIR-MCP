@@ -1,0 +1,143 @@
+# K-AIR MCP
+
+에이전트가 데이터허브 **조회**만 하도록 여는 공식 MCP 서버입니다. 창구는 하나이고, 카탈로그 소스 `engine`으로 Postgres(분석 마트)와 Tibero(수집)를 내부에서 가릅니다. SQL 문자열은 받지 않습니다.
+
+`robo-meta-api`의 T2SQL·`query_execute`와 **역할은 비슷**하나, 서버가 SQL을 만들지 않고 도구 인자로 SELECT를 조립합니다. 포털 `POST /mcp` 목업을 정본으로 복제하지 않습니다.
+
+**업데이트 이력:** [`change_log.md`](change_log.md)
+
+## 이 서비스가 하는 일
+
+- 에이전트에 표 목록·컬럼 상세·고유값·제한 SELECT·집계 도구를 줍니다.
+- 허용 표 = `POST /meta/catalog` ∩ 해당 엔진 원천에 실존하는 표·컬럼.
+- HTTP는 Streamable HTTP(` /mcp`) + `X-Api-Key`. stdio는 같은 PC IDE용입니다.
+- AI는 MCP URL과 API Key만 압니다. DB 비밀번호·robo 주소는 도구 결과에 없습니다.
+
+하지 않는 일: 자유 SQL, DML/DDL, dump/보내기, 운영 Tibero, `t2s`·`argus_catalog` 데이터 조회, 엔진마다 MCP를 나누기.
+
+## 도구
+
+| 도구 | 역할 |
+| --- | --- |
+| `list_tables` | 허용 표 목록. 선택 `schema_name`. 응답에 `engine` |
+| `describe_table` | 컬럼 타입·PK·코멘트. 없는 한글 설명은 빈 칸 |
+| `get_distinct_values` | 허용 컬럼 DISTINCT. 최대 200 |
+| `query_table` | 조립 SELECT. `columns`, `filters` `{column,op,value}`, `order_by` `{column,dir}` |
+| `aggregate_table` | `count`/`sum`/`avg`/`max`/`min`. 전체 행 수는 `func=count` 그리고 column 없음 |
+
+행 상한 **200**. 읽기 전용(`default_transaction_read_only`), `statement_timeout` 15초. `filters.op`: eq, ne, gt, gte, lt, lte, like, in, is_null, is_not_null.
+
+## 엔진 구분
+
+`/meta/catalog`의 `sources[].engine`이 정본입니다. 에이전트가 엔진을 고르지 않습니다.
+
+| 카탈로그 `engine` | 원천 |
+| --- | --- |
+| `postgresql` / `postgres` / `postgis` | 분석 마트 (로컬은 `kair-postgis-16`) |
+| `tibero` / `oracle` | 수집 Tibero. OA에서 oracle로 적히는 경우가 있음 |
+
+엔진이 없거나 모르는 값이면 목록에서 뺍니다. Tibero 표가 Postgres 실존 표와 이름이 같아도 섞지 않습니다.
+
+로컬에는 Postgres만 있습니다. Tibero 접속·JDBC가 없으면 카탈로그 Tibero 소스는 목록에 안 나옵니다. JDBC JAR는 이미지에 넣지 않습니다.
+
+## 구성
+
+```text
+app/                 FastMCP 서버 (stdio / Streamable HTTP)
+tests/               단위·계약 테스트
+docker-compose.yml   네트워크용 http :8110
+mcp.cursor.example.json       같은 PC stdio
+mcp.cursor.http.example.json  다른 PC HTTP
+```
+
+전제: `robo-meta-api`와 `kair-metadata-platform_control-plane` 네트워크. 데이터면은 로컬 `kair-postgis-16`(호스트 5434). 포털·OASIS·운영 Tibero는 이 저장소 범위가 아닙니다.
+
+## 실행
+
+```powershell
+copy .env.example .env
+# MCP_API_KEYS · MCP_PG_* 실제 값만 채움. 따옴표 넣지 않음
+docker compose up -d --build
+curl.exe -fsS http://127.0.0.1:8110/health
+```
+
+헬스: `{"status":"ok","server":"kair-mcp-query","transport":"streamable-http","engines":["postgres"]}`
+
+같은 PC CLI(stdio, 기본):
+
+```powershell
+python -m app.main
+```
+
+컨테이너 HTTP:
+
+```powershell
+python -m app.main --transport http
+```
+
+## MCP 등록
+
+같은 PC(권장 stdio). 컨테이너가 떠 있어야 합니다. URL·키·`.env`를 넣지 않습니다.
+
+```json
+{
+  "mcpServers": {
+    "kair-query": {
+      "command": "docker",
+      "args": ["exec", "-i", "kair-mcp-query", "python", "-m", "app.main", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+다른 PC(Streamable HTTP). DB 비밀번호는 넣지 않습니다.
+
+```json
+{
+  "mcpServers": {
+    "kair-query": {
+      "url": "http://<MCP띄운PC의IP>:8110/mcp",
+      "headers": {
+        "X-Api-Key": "<MCP_API_KEYS 값만>"
+      }
+    }
+  }
+}
+```
+
+`mcp.json`은 JSON이라 키를 `"…"`로 감쌉니다. 서버가 받는 값은 따옴표 없는 키입니다.
+
+## 설정
+
+`.env.example`을 Git에서 제외된 `.env`로 복사합니다. 비밀번호·API Key는 코드와 Git 추적 문서에 저장하지 않습니다.
+
+| 변수 | 역할 |
+| --- | --- |
+| `MCP_API_KEYS` | HTTP `X-Api-Key`. 로컬 스모크 키. 포털 `dh_`·`tm_po_api_key`가 아님 |
+| `MCP_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` | 마트 SELECT 계정. 기본 호스트 `host.docker.internal`, 포트 `5434` |
+| `ROBO_META_URL` | `POST /meta/catalog`. 기본 `http://robo-meta-api:8100` |
+| `MCP_ROW_LIMIT` | 행 상한. 서버가 200으로 자름 |
+| `MCP_TB_*` | 수집 Tibero. 접속이 있을 때만 |
+
+접속 정본은 OA에서 `SourceDbConn`입니다. 로컬은 env/CLI입니다.
+
+## 테스트
+
+```powershell
+python -m pytest tests -q
+```
+
+## 알려진 이슈·한계
+
+| 항목 | 설명 | 상태 |
+| --- | --- | --- |
+| **Tibero 실행** | 방언(`FETCH FIRST`)·엔진 분기는 있음. JDBC 접속은 없음 | 수집 SID·JAR가 오면 이음 |
+| **포털 키·감사** | `tm_po_api_key` / `th_po_api_call` / 등급·활용신청 | 미구현. 로컬 키는 폐기 대상 |
+| **자유 SQL** | Gemini 피드백의 `execute_read_only_sql` | 넣지 않음 |
+| **행 상한 1000** | Gemini 피드백 | 적용 안 함. 200 유지 |
+
+## 관련
+
+- `robo-meta-api` — `POST /meta/catalog`
+- `K-AIR-metadata-platform` — Serving `t2s_*`
+- `K-AIR-Portal` — 이후 정본 창구 `POST /api/v1/mcp`, 키 원장

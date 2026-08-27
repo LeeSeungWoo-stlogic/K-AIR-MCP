@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "kair-query": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "kair-mcp-query",
+        "python",
+        "-m",
+        "app.main",
+        "--transport",
+        "stdio"
+      ]
+    }
+  }
+}

@@ -1,0 +1,2 @@
+class IdentError(ValueError):
+    pass

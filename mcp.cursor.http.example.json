@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "kair-query": {
+      "url": "http://이PC의IP:8110/mcp",
+      "headers": {
+        "X-Api-Key": "여기에_MCP_API_KEYS_값만"
+      }
+    }
+  }
+}

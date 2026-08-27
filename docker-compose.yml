@@ -1,0 +1,45 @@
+# 공식 MCP 서버. 기본 CLI는 stdio, 이 compose는 네트워크용 http.
+# 기동: docker compose up -d --build
+# IDE 로컬: docker exec -i kair-mcp-query python -m app.main --transport stdio
+# 네트워크: http://<이-PC-IP>:8110/mcp  + X-Api-Key (DB 비밀번호 넣지 않음)
+
+name: kair-mcp-local
+
+services:
+  kair-mcp-query:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kair-mcp-query:dev
+    container_name: kair-mcp-query
+    restart: unless-stopped
+    command: ["--transport", "http"]
+    ports:
+      - "8110:8110"
+    env_file:
+      - .env
+    environment:
+      API_HOST: "0.0.0.0"
+      API_PORT: "8110"
+      ROBO_META_URL: "http://robo-meta-api:8100"
+      MCP_API_KEYS: "${MCP_API_KEYS:?MCP_API_KEYS is required}"
+      MCP_PG_HOST: "${MCP_PG_HOST:-host.docker.internal}"
+      MCP_PG_PORT: "${MCP_PG_PORT:-5434}"
+      MCP_PG_DB: "${MCP_PG_DB:?MCP_PG_DB is required}"
+      MCP_PG_USER: "${MCP_PG_USER:?MCP_PG_USER is required}"
+      MCP_PG_PASSWORD: "${MCP_PG_PASSWORD:?MCP_PG_PASSWORD is required}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - kair-control-plane
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8110/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+networks:
+  kair-control-plane:
+    external: true
+    name: kair-metadata-platform_control-plane
