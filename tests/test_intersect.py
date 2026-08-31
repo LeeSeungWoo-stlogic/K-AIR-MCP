@@ -9,6 +9,28 @@ def _pg(tables, columns):
     }
 
 
+def test_catalog_engines_and_schemas():
+    catalog = {
+        "sources": [
+            {
+                "source_name": "rwis",
+                "engine": "oracle",
+                "source_schema": "RWIS",
+                "tables": [{"table_name": "T", "schema_name": "RWIS", "columns": [{"column_name": "A"}]}],
+            },
+            {
+                "source_name": "mart",
+                "engine": "postgresql",
+                "source_schema": "rwis_mart",
+                "tables": [{"table_name": "fct", "columns": [{"column_name": "v"}]}],
+            },
+        ]
+    }
+    assert intersect.catalog_engines(catalog) == {POSTGRES, TIBERO}
+    assert intersect.catalog_schemas(catalog, TIBERO) == {"RWIS"}
+    assert intersect.catalog_schemas(catalog, POSTGRES) == {"rwis_mart"}
+
+
 def test_empty_catalog_yields_nothing():
     allowed = intersect.intersect_catalog({"sources": []}, _pg({("RWIS", "T")}, {("RWIS", "T"): ("A",)}))
     assert allowed == []

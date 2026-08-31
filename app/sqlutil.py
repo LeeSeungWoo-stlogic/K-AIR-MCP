@@ -59,6 +59,7 @@ def assemble_select_bound(
     sql = f"SELECT {col_sql} FROM {quote_ident(schema)}.{quote_ident(table)}"
     params: list[Any] = []
     clauses: list[str] = []
+    ph = "?" if dialect == TIBERO else "%s"
     for item in filters:
         col = quote_ident(item.column)
         if item.op == "is_null":
@@ -67,10 +68,10 @@ def assemble_select_bound(
             clauses.append(f"{col} IS NOT NULL")
         elif item.op == "in":
             values = list(item.value)
-            clauses.append(f"{col} IN ({', '.join(['%s'] * len(values))})")
+            clauses.append(f"{col} IN ({', '.join([ph] * len(values))})")
             params.extend(values)
         else:
-            clauses.append(f"{col} {OPS[item.op]} %s")
+            clauses.append(f"{col} {OPS[item.op]} {ph}")
             params.append(item.value)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
@@ -87,8 +88,9 @@ def assemble_distinct(
     schema: str, table: str, column: str, limit: int, dialect: str = POSTGRES
 ) -> str:
     col = quote_ident(column)
+    value_alias = quote_ident("value") if dialect == TIBERO else "value"
     return (
-        f"SELECT DISTINCT {col} AS value "
+        f"SELECT DISTINCT {col} AS {value_alias} "
         f"FROM {quote_ident(schema)}.{quote_ident(table)} "
         f"WHERE {col} IS NOT NULL "
         f"ORDER BY 1{limit_clause(limit, dialect)}"
@@ -107,14 +109,16 @@ def assemble_aggregate(
     name = (func or "").strip().lower()
     if name not in AGG_FUNCS:
         raise IdentError("unsupported aggregate")
+    count_alias = quote_ident("row_count") if dialect == TIBERO else "row_count"
+    value_alias = quote_ident("value") if dialect == TIBERO else "value"
     if name == "count" and not column:
-        expr = "COUNT(*) AS row_count"
+        expr = f"COUNT(*) AS {count_alias}"
     elif name == "count":
-        expr = f"COUNT({quote_ident(column)}) AS row_count"
+        expr = f"COUNT({quote_ident(column)}) AS {count_alias}"
     else:
         if not column:
             raise IdentError("column is required")
-        expr = f"{name.upper()}({quote_ident(column)}) AS value"
+        expr = f"{name.upper()}({quote_ident(column)}) AS {value_alias}"
     groups = [quote_ident(item) for item in group_by]
     select_list = ", ".join([*groups, expr]) if groups else expr
     sql = f"SELECT {select_list} FROM {quote_ident(schema)}.{quote_ident(table)}"

@@ -5,6 +5,42 @@ from dataclasses import dataclass
 from .engine import normalize_engine
 
 
+def catalog_engines(catalog: dict) -> set[str]:
+    sources = catalog.get("sources") if isinstance(catalog, dict) else None
+    if not sources:
+        return set()
+    engines: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        engine = normalize_engine(source.get("engine"))
+        if engine:
+            engines.add(engine)
+    return engines
+
+
+def catalog_schemas(catalog: dict, engine: str) -> set[str]:
+    sources = catalog.get("sources") if isinstance(catalog, dict) else None
+    if not sources:
+        return set()
+    schemas: set[str] = set()
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        if normalize_engine(source.get("engine")) != engine:
+            continue
+        source_schema = str(source.get("source_schema") or "").strip()
+        if source_schema:
+            schemas.add(source_schema)
+        for table in source.get("tables") or []:
+            if not isinstance(table, dict):
+                continue
+            schema_name = str(table.get("schema_name") or source_schema or "").strip()
+            if schema_name:
+                schemas.add(schema_name)
+    return schemas
+
+
 @dataclass(frozen=True)
 class EngineInventory:
     tables: set[tuple[str, str]]

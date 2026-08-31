@@ -63,9 +63,15 @@ K-AIR MCP 업데이트 이력입니다. 서비스 설명·기능 안내는 [`REA
 - `postgresql`/`postgres`/`postgis` → 마트(Postgres)
 - `tibero`/`oracle` → 수집 Tibero. 같은 스키마·표 이름이 Postgres에 있어도 섞지 않음
 - 엔진 없음·미지원 값은 목록에서 제외
-- Tibero SQL은 `FETCH FIRST n ROWS ONLY`. JDBC 실행은 아직 없음(로컬 원천 없음)
+- Tibero SQL은 `FETCH FIRST n ROWS ONLY`
 
 관련: `app/engine.py` · `app/intersect.py` · `app/tb_store.py` · `tests/test_engine.py` · `tests/test_intersect.py`
+
+### Tibero JDBC 조회 · 카탈로그 선행
+
+카탈로그 `sources[].engine`을 먼저 읽고 그 엔진 원천만 연다. 분석 Postgres가 없거나 5434가 꺼져 있으면 짧게 실패하고 기동을 유지한다. Tibero 목록·코멘트는 `driver/tibero-jdbc.jar` mount + JDBC. 행 조회는 2026-08-28에 `/query_execute`로 옮김. JAR은 Git에 없다.
+
+관련: `app/tb_store.py` · `app/tools.py` · `app/main.py` · `app/settings.py` · `docker-compose.yml` · `Dockerfile` · `driver/README.md`
 
 ### 문서
 

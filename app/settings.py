@@ -42,6 +42,21 @@ class Settings:
     tb_jdbc_jar: str
 
     @property
+    def pg_configured(self) -> bool:
+        return bool(self.pg_db and self.pg_user and self.pg_password)
+
+    @property
+    def tb_configured(self) -> bool:
+        return bool(
+            self.tb_host
+            and self.tb_port
+            and self.tb_sid
+            and self.tb_user
+            and self.tb_password
+            and self.tb_jdbc_jar
+        )
+
+    @property
     def pg_conninfo(self) -> str:
         return (
             f"host={self.pg_host} port={self.pg_port} dbname={self.pg_db} "
@@ -54,12 +69,6 @@ def load_settings() -> Settings:
     pg_db = (os.environ.get("MCP_PG_DB") or os.environ.get("SOURCE_PG_DB") or "").strip()
     pg_user = (os.environ.get("MCP_PG_USER") or os.environ.get("SOURCE_PG_USER") or "").strip()
     pg_password = (os.environ.get("MCP_PG_PASSWORD") or os.environ.get("SOURCE_PG_PASS") or "").strip()
-    if not pg_db:
-        raise SettingsError("MCP_PG_DB or SOURCE_PG_DB is required")
-    if not pg_user:
-        raise SettingsError("MCP_PG_USER or SOURCE_PG_USER is required")
-    if not pg_password:
-        raise SettingsError("MCP_PG_PASSWORD or SOURCE_PG_PASS is required")
 
     port_raw = (os.environ.get("MCP_PG_PORT") or "5434").strip()
     try:

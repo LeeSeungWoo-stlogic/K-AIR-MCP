@@ -26,9 +26,20 @@ services:
       # MCP_PG_* : 목록·허용 게이트. SELECT는 ROBO_META_URL /query_execute
       MCP_PG_HOST: "${MCP_PG_HOST:-host.docker.internal}"
       MCP_PG_PORT: "${MCP_PG_PORT:-5434}"
-      MCP_PG_DB: "${MCP_PG_DB:?MCP_PG_DB is required}"
-      MCP_PG_USER: "${MCP_PG_USER:?MCP_PG_USER is required}"
-      MCP_PG_PASSWORD: "${MCP_PG_PASSWORD:?MCP_PG_PASSWORD is required}"
+      MCP_PG_DB: "${MCP_PG_DB:-}"
+      MCP_PG_USER: "${MCP_PG_USER:-}"
+      MCP_PG_PASSWORD: "${MCP_PG_PASSWORD:-}"
+      MCP_TB_HOST: "${MCP_TB_HOST:-}"
+      MCP_TB_PORT: "${MCP_TB_PORT:-}"
+      MCP_TB_SID: "${MCP_TB_SID:-}"
+      MCP_TB_USER: "${MCP_TB_USER:-}"
+      MCP_TB_PASSWORD: "${MCP_TB_PASSWORD:-}"
+      MCP_TB_JDBC_JAR: "${MCP_TB_JDBC_JAR:-/opt/tibero/jdbc/tibero7-jdbc.jar}"
+    volumes:
+      - type: bind
+        source: ./driver/tibero-jdbc.jar
+        target: /opt/tibero/jdbc/tibero7-jdbc.jar
+        read_only: true
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
