@@ -121,3 +121,128 @@ def assemble_aggregate(
     if groups:
         sql += " GROUP BY " + ", ".join(groups)
     return sql + limit_clause(limit, dialect)
+
+
+_EXEC_FORBIDDEN = frozenset({"`", "\x00", ";", "\\", '"'})
+
+
+def quote_ident_exec(name: str) -> str:
+    if not isinstance(name, str) or not name.strip():
+        raise IdentError("identifier is required")
+    if len(name) > 128:
+        raise IdentError("identifier is too long")
+    if any(ch in name for ch in _EXEC_FORBIDDEN) or "." in name:
+        raise IdentError("invalid identifier")
+    return f"`{name}`"
+
+
+def sql_literal(value: Any) -> str:
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise IdentError("invalid numeric literal")
+        return repr(value)
+    if value is None:
+        raise IdentError("literal value is required")
+    text = str(value)
+    if "\x00" in text:
+        raise IdentError("invalid literal")
+    return "'" + text.replace("'", "''") + "'"
+
+
+def _exec_table(source_name: str, schema_name: str, table_name: str) -> str:
+    return (
+        f"{quote_ident_exec(source_name)}.{quote_ident_exec(schema_name)}."
+        f"{quote_ident_exec(table_name)}"
+    )
+
+
+def assemble_exec_select(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    columns: list[str],
+    filters: list[Filter],
+    order_by: list[Order],
+    limit: int,
+) -> str:
+    if not columns:
+        raise IdentError("columns are required")
+    col_sql = ", ".join(quote_ident_exec(col) for col in columns)
+    sql = f"SELECT {col_sql} FROM {_exec_table(source_name, schema_name, table_name)}"
+    sql += _exec_where(filters)
+    if order_by:
+        parts = [
+            f"{quote_ident_exec(item.column)} {'DESC' if item.direction == 'desc' else 'ASC'}"
+            for item in order_by
+        ]
+        sql += " ORDER BY " + ", ".join(parts)
+    return sql + f" LIMIT {int(limit)}"
+
+
+def _exec_where(filters: list[Filter]) -> str:
+    clauses: list[str] = []
+    for item in filters:
+        col = quote_ident_exec(item.column)
+        if item.op == "is_null":
+            clauses.append(f"{col} IS NULL")
+        elif item.op == "is_not_null":
+            clauses.append(f"{col} IS NOT NULL")
+        elif item.op == "in":
+            values = list(item.value)
+            literals = ", ".join(sql_literal(val) for val in values)
+            clauses.append(f"{col} IN ({literals})")
+        else:
+            clauses.append(f"{col} {OPS[item.op]} {sql_literal(item.value)}")
+    if not clauses:
+        return ""
+    return " WHERE " + " AND ".join(clauses)
+
+
+def assemble_exec_distinct(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    column: str,
+    limit: int,
+) -> str:
+    col = quote_ident_exec(column)
+    return (
+        f"SELECT DISTINCT {col} AS {quote_ident_exec('value')} "
+        f"FROM {_exec_table(source_name, schema_name, table_name)} "
+        f"WHERE {col} IS NOT NULL "
+        f"ORDER BY 1 LIMIT {int(limit)}"
+    )
+
+
+def assemble_exec_aggregate(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    func: str,
+    column: str | None,
+    group_by: list[str],
+    limit: int,
+    filters: list[Filter] | None = None,
+) -> str:
+    name = (func or "").strip().lower()
+    if name not in AGG_FUNCS:
+        raise IdentError("unsupported aggregate")
+    if name == "count" and not column:
+        expr = f"COUNT(*) AS {quote_ident_exec('row_count')}"
+    elif name == "count":
+        expr = f"COUNT({quote_ident_exec(column)}) AS {quote_ident_exec('row_count')}"
+    else:
+        if not column:
+            raise IdentError("column is required")
+        expr = f"{name.upper()}({quote_ident_exec(column)}) AS {quote_ident_exec('value')}"
+    groups = [quote_ident_exec(item) for item in group_by]
+    select_list = ", ".join([*groups, expr]) if groups else expr
+    sql = f"SELECT {select_list} FROM {_exec_table(source_name, schema_name, table_name)}"
+    sql += _exec_where(filters or [])
+    if groups:
+        sql += " GROUP BY " + ", ".join(groups)
+    return sql + f" LIMIT {int(limit)}"

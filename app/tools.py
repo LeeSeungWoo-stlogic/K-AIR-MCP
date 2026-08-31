@@ -5,7 +5,7 @@ from typing import Any
 
 from psycopg_pool import AsyncConnectionPool
 
-from . import catalog_client, filters, intersect, pg_store, sqlutil, tb_store
+from . import catalog_client, execute_client, filters, intersect, pg_store, sqlutil, tb_store
 from .engine import POSTGRES, TIBERO
 from .settings import Settings
 
@@ -84,18 +84,15 @@ async def _column_comments(
     raise QueryError(f"지원하지 않는 engine 입니다: {table.engine}")
 
 
-async def _fetch_rows(
-    settings: Settings,
-    pool: AsyncConnectionPool,
-    table: intersect.AllowedTable,
-    sql: str,
-    params: tuple = (),
-) -> list[dict]:
-    if table.engine == POSTGRES:
-        return await pg_store.fetch_rows(pool, sql, params)
-    if table.engine == TIBERO:
-        return await tb_store.fetch_rows(settings, sql, params)
-    raise QueryError(f"지원하지 않는 engine 입니다: {table.engine}")
+async def _execute_sql(settings: Settings, sql: str, max_rows: int) -> list[dict]:
+    try:
+        return await execute_client.execute_query(
+            settings.robo_meta_url,
+            sql,
+            max_rows=max_rows,
+        )
+    except execute_client.ExecuteError as exc:
+        raise QueryError(str(exc)) from exc
 
 
 async def describe_table(settings: Settings, pool: AsyncConnectionPool, args: dict[str, Any]) -> dict:
@@ -134,19 +131,19 @@ async def get_distinct_values(settings: Settings, pool: AsyncConnectionPool, arg
         raise QueryError("column_name 이 필요합니다.")
     try:
         physical_column = intersect.resolve_columns(table, [column])[0]
-        limit = sqlutil.clamp_limit(args.get("limit"), 50, 200)
-        sql = sqlutil.assemble_distinct(
-            table.physical_schema,
-            table.physical_table,
+        limit = sqlutil.clamp_limit(args.get("limit"), 50, settings.row_limit)
+        sql = sqlutil.assemble_exec_distinct(
+            table.source_name,
+            table.schema_name,
+            table.table_name,
             physical_column,
             limit,
-            table.engine,
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
     except sqlutil.IdentError as exc:
         raise QueryError(str(exc)) from exc
-    rows = await _fetch_rows(settings, pool, table, sql)
+    rows = await _execute_sql(settings, sql, limit)
     values = [row.get("value") for row in rows]
     log.info("get_distinct_values %s.%s.%s n=%s", table.schema_name, table.table_name, physical_column, len(values))
     return {
@@ -179,21 +176,21 @@ async def query_table(settings: Settings, pool: AsyncConnectionPool, args: dict[
             col = intersect.resolve_columns(table, [item.column])[0]
             bound_order.append(filters.Order(column=col, direction=item.direction))
         limit = sqlutil.clamp_limit(args.get("limit"), 50, settings.row_limit)
-        sql, params = sqlutil.assemble_select_bound(
-            table.physical_schema,
-            table.physical_table,
+        sql = sqlutil.assemble_exec_select(
+            table.source_name,
+            table.schema_name,
+            table.table_name,
             physical_columns,
             bound_filters,
             bound_order,
             limit,
-            table.engine,
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
     except sqlutil.IdentError as exc:
         raise QueryError(str(exc)) from exc
 
-    rows = await _fetch_rows(settings, pool, table, sql, params)
+    rows = await _execute_sql(settings, sql, limit)
     log.info("query_table %s.%s rows=%s", table.schema_name, table.table_name, len(rows))
     return {
         **_table_ref(table),
@@ -221,22 +218,28 @@ async def aggregate_table(settings: Settings, pool: AsyncConnectionPool, args: d
             resolved = intersect.resolve_columns(table, [column])
             physical_column = resolved[0]
         group_by = intersect.resolve_columns(table, group_names) if group_names else []
+        parsed_filters = filters.parse_filters(args.get("filters"))
+        bound_filters = []
+        for item in parsed_filters:
+            col = intersect.resolve_columns(table, [item.column])[0]
+            bound_filters.append(filters.Filter(column=col, op=item.op, value=item.value))
         limit = sqlutil.clamp_limit(args.get("limit"), 1 if not group_by else 50, settings.row_limit)
-        sql = sqlutil.assemble_aggregate(
-            table.physical_schema,
-            table.physical_table,
+        sql = sqlutil.assemble_exec_aggregate(
+            table.source_name,
+            table.schema_name,
+            table.table_name,
             func,
             physical_column,
             group_by,
             limit,
-            table.engine,
+            bound_filters,
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
     except sqlutil.IdentError as exc:
         raise QueryError(str(exc)) from exc
 
-    rows = await _fetch_rows(settings, pool, table, sql)
+    rows = await _execute_sql(settings, sql, limit)
     log.info("aggregate_table %s.%s func=%s rows=%s", table.schema_name, table.table_name, func, len(rows))
     return {
         **_table_ref(table),

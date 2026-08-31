@@ -123,9 +123,10 @@ async def aggregate_table(
     func: str,
     column: str | None = None,
     group_by: list[str] | None = None,
+    filters: list[dict] | None = None,
     limit: int = 50,
 ) -> dict:
-    """허용된 표에서 count/sum/avg/max/min 만 조립한다. 전체 행 수는 func=count, column 없음."""
+    """허용된 표에서 count/sum/avg/max/min 만 조립한다. 전체 행 수는 func=count, column 없음. filters 는 query_table 과 같은 {column,op,value}."""
     settings, pool = _runtime()
     return await tools.aggregate_table(
         settings,
@@ -137,6 +138,7 @@ async def aggregate_table(
             "func": func,
             "column": column,
             "group_by": group_by,
+            "filters": filters,
             "limit": limit,
         },
     )

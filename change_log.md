@@ -4,6 +4,38 @@ K-AIR MCP 업데이트 이력입니다. 서비스 설명·기능 안내는 [`REA
 
 ---
 
+## 2026-08-31
+
+### aggregate_table 필터
+
+`aggregate_table`에 `query_table`과 같은 선택 `filters` `{column,op,value}`를 둔다. SQL은 `WHERE` 다음 `GROUP BY`.
+
+관련: `app/sqlutil.py` · `app/tools.py` · `app/main.py`
+
+### 행 상한 하드캡 해제
+
+`MCP_ROW_LIMIT`를 서버가 200으로 자르지 않는다. env 값이 `query_table` · `aggregate_table` · `get_distinct_values` 상한이다.
+
+관련: `app/settings.py` · `app/tools.py`
+
+---
+
+## 2026-08-28
+
+### 실행면 `/query_execute`
+
+`query_table` · `get_distinct_values` · `aggregate_table`의 SELECT를 데이터 Postgres 직접 실행에서 `robo-meta-api` `POST /query_execute`로 옮김. 도구 인자·`mcp.json` 등록은 그대로.
+
+- SQL은 완성 문자열만. 식별자 백틱 3단 수식, 필터 리터럴 인라인, `LIMIT n`. `%s` 없음
+- HTTP 오류와 본문 `status != ok`는 도구 오류. 빈 `rows`를 성공 `items=[]`로 바꾸지 않음
+- `list_tables` · `describe_table` · `MCP_PG_*` 허용 게이트는 유지. `ROBO_META_URL`이 catalog·execute 공통
+
+관련: `app/execute_client.py` · `app/sqlutil.py` · `app/tools.py` · `tests/test_execute_client.py`
+
+문서: `README.md` — 실행면은 `/query_execute`, `MCP_PG_*`는 목록 게이트, `MCP_ROW_LIMIT`는 env 그대로.
+
+---
+
 ## 2026-08-27
 
 ### 조회 MCP 서버

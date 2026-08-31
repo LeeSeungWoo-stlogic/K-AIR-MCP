@@ -91,7 +91,7 @@ def load_settings() -> Settings:
         pg_user=pg_user,
         pg_password=pg_password,
         robo_meta_url=(os.environ.get("ROBO_META_URL") or "http://robo-meta-api:8100").rstrip("/"),
-        row_limit=min(row_limit, 200),
+        row_limit=row_limit,
         api_host=(os.environ.get("API_HOST") or "0.0.0.0").strip(),
         api_port=int((os.environ.get("API_PORT") or "8110").strip()),
         tb_host=(os.environ.get("MCP_TB_HOST") or "").strip(),

@@ -23,6 +23,7 @@ services:
       API_PORT: "8110"
       ROBO_META_URL: "http://robo-meta-api:8100"
       MCP_API_KEYS: "${MCP_API_KEYS:?MCP_API_KEYS is required}"
+      # MCP_PG_* : 목록·허용 게이트. SELECT는 ROBO_META_URL /query_execute
       MCP_PG_HOST: "${MCP_PG_HOST:-host.docker.internal}"
       MCP_PG_PORT: "${MCP_PG_PORT:-5434}"
       MCP_PG_DB: "${MCP_PG_DB:?MCP_PG_DB is required}"

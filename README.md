@@ -2,7 +2,7 @@
 
 에이전트가 데이터허브 **조회**만 하도록 여는 공식 MCP 서버입니다. 창구는 하나이고, 카탈로그 소스 `engine`으로 Postgres(분석 마트)와 Tibero(수집)를 내부에서 가릅니다. SQL 문자열은 받지 않습니다.
 
-`robo-meta-api`의 T2SQL·`query_execute`와 **역할은 비슷**하나, 서버가 SQL을 만들지 않고 도구 인자로 SELECT를 조립합니다. 포털 `POST /mcp` 목업을 정본으로 복제하지 않습니다.
+도구 인자로 SELECT를 조립한 뒤 `robo-meta-api` `POST /query_execute`로 실행합니다. 에이전트에 SQL 문자열 도구는 없습니다. 포털 `POST /mcp` 목업을 정본으로 복제하지 않습니다.
 
 **업데이트 이력:** [`change_log.md`](change_log.md)
 
@@ -21,11 +21,11 @@
 | --- | --- |
 | `list_tables` | 허용 표 목록. 선택 `schema_name`. 응답에 `engine` |
 | `describe_table` | 컬럼 타입·PK·코멘트. 없는 한글 설명은 빈 칸 |
-| `get_distinct_values` | 허용 컬럼 DISTINCT. 최대 200 |
+| `get_distinct_values` | 허용 컬럼 DISTINCT. 상한은 `MCP_ROW_LIMIT` |
 | `query_table` | 조립 SELECT. `columns`, `filters` `{column,op,value}`, `order_by` `{column,dir}` |
-| `aggregate_table` | `count`/`sum`/`avg`/`max`/`min`. 전체 행 수는 `func=count` 그리고 column 없음 |
+| `aggregate_table` | `count`/`sum`/`avg`/`max`/`min`. 선택 `filters` `{column,op,value}`. 전체 행 수는 `func=count` 그리고 column 없음 |
 
-행 상한 **200**. 읽기 전용(`default_transaction_read_only`), `statement_timeout` 15초. `filters.op`: eq, ne, gt, gte, lt, lte, like, in, is_null, is_not_null.
+행 상한은 `MCP_ROW_LIMIT`(기본 200). 실행 SELECT는 `POST /query_execute`. 허용 확인용 Postgres는 읽기 전용·`statement_timeout` 15초. `filters.op`: eq, ne, gt, gte, lt, lte, like, in, is_null, is_not_null.
 
 ## 엔진 구분
 
@@ -114,9 +114,9 @@ python -m app.main --transport http
 | 변수 | 역할 |
 | --- | --- |
 | `MCP_API_KEYS` | HTTP `X-Api-Key`. 로컬 스모크 키. 포털 `dh_`·`tm_po_api_key`가 아님 |
-| `MCP_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` | 마트 SELECT 계정. 기본 호스트 `host.docker.internal`, 포트 `5434` |
-| `ROBO_META_URL` | `POST /meta/catalog`. 기본 `http://robo-meta-api:8100` |
-| `MCP_ROW_LIMIT` | 행 상한. 서버가 200으로 자름 |
+| `MCP_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` | 목록·허용 게이트용 마트 인벤토리. SELECT 실행용이 아님. 기본 호스트 `host.docker.internal`, 포트 `5434` |
+| `ROBO_META_URL` | `POST /meta/catalog`와 `POST /query_execute` 공통. 기본 `http://robo-meta-api:8100` |
+| `MCP_ROW_LIMIT` | 행 상한. env 값을 그대로 씀 |
 | `MCP_TB_*` | 수집 Tibero. 접속이 있을 때만 |
 
 접속 정본은 OA에서 `SourceDbConn`입니다. 로컬은 env/CLI입니다.
@@ -131,13 +131,16 @@ python -m pytest tests -q
 
 | 항목 | 설명 | 상태 |
 | --- | --- | --- |
-| **Tibero 실행** | 방언(`FETCH FIRST`)·엔진 분기는 있음. JDBC 접속은 없음 | 수집 SID·JAR가 오면 이음 |
+| **Tibero 실행** | 행 조회는 `/query_execute`. 목록에 나오려면 여전히 `MCP_TB_*` 인벤토리 | JDBC 접속이 없으면 Tibero 표는 목록에서 빠짐 |
 | **포털 키·감사** | `tm_po_api_key` / `th_po_api_call` / 등급·활용신청 | 미구현. 로컬 키는 폐기 대상 |
 | **자유 SQL** | Gemini 피드백의 `execute_read_only_sql` | 넣지 않음 |
-| **행 상한 1000** | Gemini 피드백 | 적용 안 함. 200 유지 |
+| **행 상한 1000** | Gemini 피드백 | 하드캡 200 해제. `MCP_ROW_LIMIT`를 따름 |
 
 ## 관련
 
-- `robo-meta-api` — `POST /meta/catalog`
+데이터허브 조회 셋: 플랫폼(메타 적재·Serving) → `robo-meta-api`(카탈로그·실행 API) → 이 MCP(에이전트 도구).
+메타스토어 DSN·MindsDB 접속은 MCP에 없다. `ROBO_META_URL`(`http://robo-meta-api:8100`)만 본다.
+
+- `robo-meta-api` — `POST /meta/catalog`, `POST /query_execute`
 - `K-AIR-metadata-platform` — Serving `t2s_*`
 - `K-AIR-Portal` — 이후 정본 창구 `POST /api/v1/mcp`, 키 원장
