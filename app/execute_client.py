@@ -58,7 +58,8 @@ async def execute_query(
         async with httpx.AsyncClient(timeout=_http_timeout_s(timeout_s)) as client:
             response = await client.post(url, json=body)
     except httpx.HTTPError as exc:
-        raise ExecuteError(f"query_execute request failed: {exc}") from exc
+        detail = str(exc).strip() or f"{type(exc).__name__} (request timeout or connection closed)"
+        raise ExecuteError(f"query_execute request failed: {detail}") from exc
 
     payload: object
     try:

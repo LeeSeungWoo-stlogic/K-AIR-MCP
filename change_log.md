@@ -2,6 +2,16 @@
 
 K-AIR MCP 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-03
+
+### `/query_execute` 연결 오류 메시지
+
+`httpx.HTTPError`의 `str(exc)`가 비면 타입명을 넣는다. 타임아웃·연결 종료가 빈 실패 사유로 나오지 않게 한다.
+
+관련: `app/execute_client.py`
+
+---
+
 ## 2026-09-02
 
 ### robo-meta-api 단일 진실 공급원(SoT) 연계 및 물리 DB 결속 제거
