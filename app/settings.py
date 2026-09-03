@@ -25,21 +25,22 @@ def _parse_keys(raw: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class Settings:
     api_keys: tuple[str, ...]
-    pg_host: str
-    pg_port: int
-    pg_db: str
-    pg_user: str
-    pg_password: str
     robo_meta_url: str
-    row_limit: int
-    api_host: str
-    api_port: int
-    tb_host: str
-    tb_port: int | None
-    tb_sid: str
-    tb_user: str
-    tb_password: str
-    tb_jdbc_jar: str
+    row_limit: int = 200
+    api_host: str = "0.0.0.0"
+    api_port: int = 8110
+    # Optional legacy DB config (deprecated in favor of pure robo-meta-api serving)
+    pg_host: str = "host.docker.internal"
+    pg_port: int = 5434
+    pg_db: str = ""
+    pg_user: str = ""
+    pg_password: str = ""
+    tb_host: str = ""
+    tb_port: int | None = None
+    tb_sid: str = ""
+    tb_user: str = ""
+    tb_password: str = ""
+    tb_jdbc_jar: str = ""
 
     @property
     def pg_configured(self) -> bool:
@@ -94,15 +95,15 @@ def load_settings() -> Settings:
 
     return Settings(
         api_keys=_parse_keys(_require("MCP_API_KEYS")),
+        robo_meta_url=(os.environ.get("ROBO_META_URL") or "http://robo-meta-api:8100").rstrip("/"),
+        row_limit=row_limit,
+        api_host=(os.environ.get("API_HOST") or "0.0.0.0").strip(),
+        api_port=int((os.environ.get("API_PORT") or "8110").strip()),
         pg_host=(os.environ.get("MCP_PG_HOST") or "host.docker.internal").strip(),
         pg_port=pg_port,
         pg_db=pg_db,
         pg_user=pg_user,
         pg_password=pg_password,
-        robo_meta_url=(os.environ.get("ROBO_META_URL") or "http://robo-meta-api:8100").rstrip("/"),
-        row_limit=row_limit,
-        api_host=(os.environ.get("API_HOST") or "0.0.0.0").strip(),
-        api_port=int((os.environ.get("API_PORT") or "8110").strip()),
         tb_host=(os.environ.get("MCP_TB_HOST") or "").strip(),
         tb_port=tb_port,
         tb_sid=(os.environ.get("MCP_TB_SID") or "").strip(),

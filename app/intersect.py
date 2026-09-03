@@ -63,6 +63,47 @@ def _key(schema: str, table: str) -> tuple[str, str]:
     return (schema.lower(), table.lower())
 
 
+def catalog_tables(catalog: dict) -> list[AllowedTable]:
+    sources = catalog.get("sources") if isinstance(catalog, dict) else None
+    if not sources:
+        return []
+
+    allowed: list[AllowedTable] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        engine = normalize_engine(source.get("engine")) or str(source.get("engine") or "generic").lower()
+        source_name = str(source.get("source_name") or "")
+        source_schema = str(source.get("source_schema") or "")
+        for table in source.get("tables") or []:
+            if not isinstance(table, dict):
+                continue
+            schema_name = str(table.get("schema_name") or source_schema or "")
+            table_name = str(table.get("table_name") or "")
+            if not source_name or not schema_name or not table_name:
+                continue
+            catalog_cols = [
+                str(col.get("column_name") or "")
+                for col in (table.get("columns") or [])
+                if isinstance(col, dict) and col.get("column_name")
+            ]
+            if not catalog_cols:
+                continue
+            allowed.append(
+                AllowedTable(
+                    source_name=source_name,
+                    schema_name=schema_name,
+                    table_name=table_name,
+                    engine=engine,
+                    physical_schema=schema_name,
+                    physical_table=table_name,
+                    columns=tuple(catalog_cols),
+                    physical_columns=tuple(catalog_cols),
+                )
+            )
+    return allowed
+
+
 def intersect_catalog(
     catalog: dict,
     inventories: dict[str, EngineInventory],

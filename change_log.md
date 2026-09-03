@@ -2,6 +2,19 @@
 
 K-AIR MCP 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-02
+
+### robo-meta-api 단일 진실 공급원(SoT) 연계 및 물리 DB 결속 제거
+
+카탈로그 서빙 및 질의 실행을 `robo-meta-api` 단일 창구로 정규화.
+
+- `list_tables` 및 `describe_table`이 특정 로컬 DB(Postgres `pg_class`)를 실사하던 물리 교집합 로직을 제거하고, `robo-meta-api`의 `POST /meta/catalog` 메타데이터를 직접 서빙
+- 플랫폼에 등록된 임의의 N개 데이터소스(Postgres, Tibero 등)를 별도 물리 DB 연결 정보 없이 동시 서빙 가능
+- `.env` 및 `docker-compose.yml`에서 필수였던 `MCP_PG_*`, `MCP_TB_*` 제거. `MCP_API_KEYS`와 `ROBO_META_URL`만으로 기동
+- 헬스 본문은 `backend=robo-meta-api`. 다중 소스 카탈로그 계약 테스트 추가
+
+관련: `app/settings.py` · `app/intersect.py` · `app/tools.py` · `app/main.py` · `docker-compose.yml` · `.env.example` · `tests/test_multi_source_catalog.py`
+
 ---
 
 ## 2026-08-31
