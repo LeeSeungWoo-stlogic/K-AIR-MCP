@@ -2,6 +2,22 @@
 
 K-AIR MCP 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-05
+
+### 죽은 물리 DB 경로 제거
+
+조회 경로가 쓰지 않던 Postgres/Tibero 직접 접속 코드를 삭제한다. `MCP_PG_*`·`MCP_TB_*` 설정, `pg_store`·`tb_store`, `intersect_catalog`, JDBC/JRE/psycopg 의존을 제거한다. 허용 표는 `POST /meta/catalog`만 본다.
+
+관련: `app/settings.py` · `app/intersect.py` · `app/runtime.py` · `requirements.txt` · `Dockerfile` · `docs/GUIDE_OA_반입준비.md`
+
+### 카탈로그 조회 표면
+
+`list_tables`·`describe_table`이 카탈로그 `logical_name`/`description`을 준다. `describe_table`은 카탈로그를 한 번만 읽는다. `catalog_client`는 45초 TTL 캐시와 `/health`용 `probe_catalog`를 둔다. DISTINCT 별칭은 `distinct_value`이며 `IS NOT NULL`/`ORDER BY`를 붙이지 않는다.
+
+관련: `app/catalog_client.py` · `app/tools.py` · `app/sqlutil.py` · `app/main.py` · `tests/test_query_surface.py`
+
+---
+
 ## 2026-09-03
 
 ### `/query_execute` 연결 오류 메시지

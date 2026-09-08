@@ -126,10 +126,9 @@ def test_assemble_exec_select_escapes_quote_and_in():
 def test_assemble_exec_distinct():
     sql = sqlutil.assemble_exec_distinct("src", "sch", "tbl", "metric_name", 50)
     assert sql == (
-        "SELECT DISTINCT `metric_name` AS `value` "
+        "SELECT DISTINCT `metric_name` AS `distinct_value` "
         "FROM `src`.`sch`.`tbl` "
-        "WHERE `metric_name` IS NOT NULL "
-        "ORDER BY 1 LIMIT 50"
+        "LIMIT 50"
     )
 
 
@@ -165,6 +164,16 @@ def test_assemble_exec_aggregate_with_filter():
         "GROUP BY `fclty_code` LIMIT 50"
     )
     assert "%s" not in sql
+
+
+def test_row_distinct_value_reads_alias_or_physical():
+    from app.tools import _row_distinct_value
+
+    assert _row_distinct_value({"distinct_value": "한강"}, "bnb_name") == "한강"
+    assert _row_distinct_value({"value": "한강"}, "bnb_name") == "한강"
+    assert _row_distinct_value({"bnb_name": "한강"}, "bnb_name") == "한강"
+    assert _row_distinct_value({"BNB_NAME": "한강"}, "bnb_name") == "한강"
+    assert _row_distinct_value({}, "bnb_name") is None
 
 
 def test_quote_ident_exec_rejects_bad():

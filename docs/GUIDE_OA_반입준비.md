@@ -12,14 +12,14 @@
 
 ## 0. 한 줄
 
-MCP는 robo에 합치지 않는다. 163에서 http `:8110`으로 붙고, 카탈로그는 **같은 Docker 망의 robo** `POST /meta/catalog`, 마트 SELECT는 **keep `postgres_analysis`(호스트 5434)** 이다. 새 bridge를 만들지 않는다.
+MCP는 robo에 합치지 않는다. 163에서 http `:8110`으로 붙고, 카탈로그·실행은 **같은 Docker 망의 robo** `POST /meta/catalog`와 `POST /query_execute`만 쓴다. MCP에 마트/수집 DSN을 넣지 않는다. 새 bridge를 만들지 않는다.
 
 ---
 
 ## 1. 역할 (로컬 README와 동일)
 
 - 도구로 SELECT를 조립한다. 자유 SQL·DML/DDL·dump 없음.
-- 허용 표 = robo `POST /meta/catalog` ∩ 해당 엔진 원천에 있는 표.
+- 허용 표 = robo `POST /meta/catalog`에 있는 표. MCP가 원천 실존을 다시 확인하지 않는다.
 - HTTP: Streamable HTTP `/mcp` + `X-Api-Key`. AI는 URL과 키만 안다.
 - 로컬 compose 기본 이미지 `kair-mcp-query:dev`, 포트 8110, 컨테이너명 `kair-mcp-query`.
 
@@ -37,7 +37,6 @@ MCP는 robo에 합치지 않는다. 163에서 http `:8110`으로 붙고, 카탈�
 |------|--------|
 | 망 `kair-metadata-platform_control-plane` | **`robo-network` external** (robo·platform oa overlay와 동일). 새 브리지 금지 |
 | `ROBO_META_URL=http://robo-meta-api:8100` | 서비스/컨테이너명은 **`robo-meta-api-v4`**. URL은 `http://robo-meta-api-v4:8100` |
-| `MCP_PG_HOST=host.docker.internal` 포트 5434 | keep **`postgres_analysis`**. 컨테이너에서 `host.docker.internal:5434` 또는 같은 망이면 컨테이너명. 호스트 포트 5434는 유지 |
 | `image: kair-mcp-query:dev` · `--build` | 일자 태그(예 `:260827`)로 빌드·save·load. `--pull never`. 163에서 빌드하지 않는 것이 825와 같음 |
 | 프로젝트명 `kair-mcp-local` | OA 전용 overlay. 기본 브리지 생성 금지 |
 
@@ -49,7 +48,7 @@ robo와 같이 둘 것:
 - `network prune` 금지. keep 내리지 않음
 - 163:80 본선 전환 금지. 152에 `/mcp`를 넣을지는 **미정**. 우선 163 `:8110` listen
 
-Tibero: JDBC JAR는 이미지에 넣지 않는다(README). 수집 접속이 생기면 bind mount + `MCP_TB_*`. 운영 인스턴스 금지.
+Tibero JDBC·`MCP_TB_*`는 MCP에 없다. 수집 표가 Serving에 게시되어 있으면 카탈로그로만 보인다.
 
 ---
 
@@ -107,9 +106,7 @@ networks:
 |------|-----|
 | `MCP_API_KEYS` | 현장 스모크 키. 포털 `dh_` 아님 |
 | `ROBO_META_URL` | `http://robo-meta-api-v4:8100` |
-| `MCP_PG_HOST` / `PORT` / `DB` / `USER` / `PASSWORD` | 마트 SELECT. 포트 기본 5434(`postgres_analysis`). DB/계정은 현장 |
 | `MCP_ROW_LIMIT` | env 값을 그대로 씀. 기본 예시는 200 |
-| `MCP_TB_*` | 수집 접속·JAR가 있을 때만 |
 
 로컬 `.env`의 비밀번호를 패키지에 복사하지 않는다.
 
@@ -127,7 +124,7 @@ bash scripts/up-oa.sh
 curl -fsS http://127.0.0.1:8110/health
 ```
 
-헬스 예: `server`=`kair-mcp-query`, `transport`=`streamable-http`. `engines`에 postgres가 보여야 마트 접속이 된 것.
+헬스 예: `server`=`kair-mcp-query`, `transport`=`streamable-http`, `backend`=`robo-meta-api`. 엔진 목록은 넣지 않는다.
 
 ```bash
 docker inspect kair-mcp-query --format '{{.Config.Image}}'
@@ -157,5 +154,4 @@ docker network inspect robo-network --format '{{range .Containers}}{{.Name}} {{e
 
 1. 이미지 일자 태그
 2. 152 `:8000`에 MCP를 올릴지 (올리면 path·upstream만. 163:80 전환 아님)
-3. 수집 Tibero를 이번 패키지에 넣을지 (JAR bind + `MCP_TB_*`)
-4. 스모크 키 관리자·폐기 시점 (포털 키 연동은 이후)
+3. 스모크 키 관리자·폐기 시점 (포털 키 연동은 이후)

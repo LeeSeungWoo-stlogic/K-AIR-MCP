@@ -13,18 +13,37 @@ class QueryError(ValueError):
     pass
 
 
+CATALOG_UNREACHABLE = "카탈로그를 읽지 못했습니다. robo-meta-api에 연결할 수 없습니다."
+
+
+def _row_distinct_value(row: dict[str, Any], physical_column: str) -> Any:
+    if not isinstance(row, dict) or not row:
+        return None
+    lower = {str(key).lower(): value for key, value in row.items()}
+    for key in ("distinct_value", "value", physical_column.lower()):
+        if key in lower:
+            return lower[key]
+    return next(iter(row.values()), None)
+
+
 def _normalize_args(pool_or_args: Any, args: dict[str, Any] | None) -> tuple[Any, dict[str, Any]]:
     if args is None and isinstance(pool_or_args, dict):
         return None, pool_or_args
     return pool_or_args, args or {}
 
 
+async def load_catalog(settings: Settings) -> dict:
+    try:
+        return await catalog_client.fetch_catalog(settings.robo_meta_url)
+    except catalog_client.CatalogError as exc:
+        raise QueryError(CATALOG_UNREACHABLE) from exc
+
+
 async def load_allowed(
     settings: Settings,
     pool: Any = None,
 ) -> list[intersect.AllowedTable]:
-    catalog = await catalog_client.fetch_catalog(settings.robo_meta_url)
-    return intersect.catalog_tables(catalog)
+    return intersect.catalog_tables(await load_catalog(settings))
 
 
 def _table_ref(item: intersect.AllowedTable) -> dict[str, str]:
@@ -33,6 +52,13 @@ def _table_ref(item: intersect.AllowedTable) -> dict[str, str]:
         "schema_name": item.schema_name,
         "table_name": item.table_name,
         "engine": item.engine,
+    }
+
+
+def _table_labels(item: intersect.AllowedTable) -> dict[str, str | None]:
+    return {
+        "table_logical_name": item.logical_name or None,
+        "description": item.description or None,
     }
 
 
@@ -49,6 +75,7 @@ async def list_tables(
     items = [
         {
             **_table_ref(item),
+            **_table_labels(item),
             "columns": list(item.columns),
         }
         for item in allowed
@@ -57,24 +84,39 @@ async def list_tables(
     return {"total": len(items), "items": items}
 
 
-async def _allowed_table(
-    settings: Settings,
-    pool_or_args: Any,
-    args: dict[str, Any] | None = None,
-) -> intersect.AllowedTable:
-    pool, actual_args = _normalize_args(pool_or_args, args)
+def _require_table_keys(actual_args: dict[str, Any]) -> tuple[str, str, str]:
     source_name = str(actual_args.get("source_name") or "").strip()
     schema_name = str(actual_args.get("schema_name") or "").strip()
     table_name = str(actual_args.get("table_name") or "").strip()
     if not source_name or not schema_name or not table_name:
         raise QueryError("source_name, schema_name, table_name 이 필요합니다.")
-    allowed = await load_allowed(settings, pool)
+    return source_name, schema_name, table_name
+
+
+def _table_from_catalog(
+    catalog: dict,
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+) -> intersect.AllowedTable:
+    allowed = intersect.catalog_tables(catalog)
     if not allowed:
         raise QueryError("조회 가능한 표가 없습니다. 카탈로그가 비었거나 표가 없습니다.")
     table = intersect.find_table(allowed, source_name, schema_name, table_name)
     if table is None:
         raise QueryError("허용된 표가 아닙니다.")
     return table
+
+
+async def _allowed_table(
+    settings: Settings,
+    pool_or_args: Any,
+    args: dict[str, Any] | None = None,
+) -> intersect.AllowedTable:
+    pool, actual_args = _normalize_args(pool_or_args, args)
+    source_name, schema_name, table_name = _require_table_keys(actual_args)
+    catalog = await load_catalog(settings)
+    return _table_from_catalog(catalog, source_name, schema_name, table_name)
 
 
 async def _execute_sql(settings: Settings, sql: str, max_rows: int) -> list[dict]:
@@ -94,8 +136,9 @@ async def describe_table(
     args: dict[str, Any] | None = None,
 ) -> dict:
     pool, actual_args = _normalize_args(pool_or_args, args)
-    table = await _allowed_table(settings, pool, actual_args)
-    catalog = await catalog_client.fetch_catalog(settings.robo_meta_url)
+    source_name, schema_name, table_name = _require_table_keys(actual_args)
+    catalog = await load_catalog(settings)
+    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
     catalog_table = intersect.find_catalog_table(
         catalog, table.source_name, table.schema_name, table.table_name
     )
@@ -111,10 +154,16 @@ async def describe_table(
                 "data_type": col.get("data_type"),
                 "nullable": col.get("nullable"),
                 "primary_key": bool(col.get("primary_key")),
+                "logical_name": intersect.catalog_column_logical_name(col) or None,
                 "comment": col.get("comment") or col.get("description"),
             }
         )
-    return {**_table_ref(table), "columns": columns}
+    return {
+        **_table_ref(table),
+        "logical_name": table.logical_name or None,
+        "description": table.description or None,
+        "columns": columns,
+    }
 
 
 async def get_distinct_values(
@@ -142,7 +191,11 @@ async def get_distinct_values(
     except sqlutil.IdentError as exc:
         raise QueryError(str(exc)) from exc
     rows = await _execute_sql(settings, sql, limit)
-    values = [row.get("value") for row in rows]
+    values = [
+        value
+        for value in (_row_distinct_value(row, physical_column) for row in rows)
+        if value is not None
+    ]
     log.info("get_distinct_values %s.%s.%s n=%s", table.schema_name, table.table_name, physical_column, len(values))
     return {
         **_table_ref(table),

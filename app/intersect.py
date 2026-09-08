@@ -41,10 +41,24 @@ def catalog_schemas(catalog: dict, engine: str) -> set[str]:
     return schemas
 
 
-@dataclass(frozen=True)
-class EngineInventory:
-    tables: set[tuple[str, str]]
-    columns: dict[tuple[str, str], tuple[str, ...]]
+def _slot_text(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def catalog_table_logical_name(table: dict) -> str:
+    return _slot_text(table.get("logical_name"), table.get("comment"))
+
+
+def catalog_table_description(table: dict) -> str:
+    return _slot_text(table.get("description"))
+
+
+def catalog_column_logical_name(column: dict) -> str:
+    return _slot_text(column.get("logical_name"), column.get("comment"))
 
 
 @dataclass(frozen=True)
@@ -57,10 +71,8 @@ class AllowedTable:
     physical_table: str
     columns: tuple[str, ...]
     physical_columns: tuple[str, ...]
-
-
-def _key(schema: str, table: str) -> tuple[str, str]:
-    return (schema.lower(), table.lower())
+    logical_name: str = ""
+    description: str = ""
 
 
 def catalog_tables(catalog: dict) -> list[AllowedTable]:
@@ -99,68 +111,8 @@ def catalog_tables(catalog: dict) -> list[AllowedTable]:
                     physical_table=table_name,
                     columns=tuple(catalog_cols),
                     physical_columns=tuple(catalog_cols),
-                )
-            )
-    return allowed
-
-
-def intersect_catalog(
-    catalog: dict,
-    inventories: dict[str, EngineInventory],
-) -> list[AllowedTable]:
-    sources = catalog.get("sources") if isinstance(catalog, dict) else None
-    if not sources:
-        return []
-
-    allowed: list[AllowedTable] = []
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        engine = normalize_engine(source.get("engine"))
-        if engine is None:
-            continue
-        inventory = inventories.get(engine)
-        if inventory is None:
-            continue
-        source_name = str(source.get("source_name") or "")
-        source_schema = str(source.get("source_schema") or "")
-        by_key = {_key(schema, table): (schema, table) for schema, table in inventory.tables}
-        for table in source.get("tables") or []:
-            if not isinstance(table, dict):
-                continue
-            schema_name = str(table.get("schema_name") or source_schema or "")
-            table_name = str(table.get("table_name") or "")
-            if not source_name or not schema_name or not table_name:
-                continue
-            actual = by_key.get(_key(schema_name, table_name))
-            if actual is None:
-                continue
-            catalog_cols = [
-                str(col.get("column_name") or "")
-                for col in (table.get("columns") or [])
-                if isinstance(col, dict) and col.get("column_name")
-            ]
-            actual_cols = inventory.columns.get(actual, ())
-            actual_by_key = {name.lower(): name for name in actual_cols}
-            kept_catalog: list[str] = []
-            kept_physical: list[str] = []
-            for col in catalog_cols:
-                physical = actual_by_key.get(col.lower())
-                if physical and physical not in kept_physical:
-                    kept_catalog.append(col)
-                    kept_physical.append(physical)
-            if not kept_physical:
-                continue
-            allowed.append(
-                AllowedTable(
-                    source_name=source_name,
-                    schema_name=schema_name,
-                    table_name=table_name,
-                    engine=engine,
-                    physical_schema=actual[0],
-                    physical_table=actual[1],
-                    columns=tuple(kept_catalog),
-                    physical_columns=tuple(kept_physical),
+                    logical_name=catalog_table_logical_name(table),
+                    description=catalog_table_description(table),
                 )
             )
     return allowed

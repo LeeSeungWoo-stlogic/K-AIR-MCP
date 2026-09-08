@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import tools
+from . import catalog_client, tools
 from .auth import key_ok
 from .cli import parse_args
 from .runtime import RT
@@ -47,14 +47,14 @@ def _runtime():
 
 @mcp.tool()
 async def list_tables(schema_name: str | None = None) -> dict:
-    """카탈로그에 등록된 표 목록을 조회한다. schema_name 으로 필터링할 수 있다."""
+    """카탈로그 표 목록. 물리 3키와 논리명·설명을 준다. schema_name 으로 걸 수 있다."""
     settings = _runtime()
     return await tools.list_tables(settings, schema_name=schema_name)
 
 
 @mcp.tool()
 async def describe_table(source_name: str, schema_name: str, table_name: str) -> dict:
-    """카탈로그 표의 컬럼 타입·PK·한글 설명을 조회한다."""
+    """허용된 표의 논리명·컬럼 타입·PK·코멘트를 준다. 없는 한글 설명은 비운다."""
     settings = _runtime()
     return await tools.describe_table(
         settings,
@@ -140,12 +140,16 @@ async def aggregate_table(
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> Response:
+    robo_catalog = "unreachable"
+    if RT.settings is not None:
+        robo_catalog = await catalog_client.probe_catalog(RT.settings.robo_meta_url)
     return JSONResponse(
         {
             "status": "ok",
             "server": "kair-mcp-query",
             "transport": "streamable-http",
             "backend": "robo-meta-api",
+            "robo_catalog": robo_catalog,
         }
     )
 

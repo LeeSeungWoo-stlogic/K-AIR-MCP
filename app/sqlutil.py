@@ -88,12 +88,11 @@ def assemble_distinct(
     schema: str, table: str, column: str, limit: int, dialect: str = POSTGRES
 ) -> str:
     col = quote_ident(column)
-    value_alias = quote_ident("value") if dialect == TIBERO else "value"
+    value_alias = quote_ident("distinct_value") if dialect == TIBERO else "distinct_value"
     return (
         f"SELECT DISTINCT {col} AS {value_alias} "
-        f"FROM {quote_ident(schema)}.{quote_ident(table)} "
-        f"WHERE {col} IS NOT NULL "
-        f"ORDER BY 1{limit_clause(limit, dialect)}"
+        f"FROM {quote_ident(schema)}.{quote_ident(table)}"
+        f"{limit_clause(limit, dialect)}"
     )
 
 
@@ -215,10 +214,9 @@ def assemble_exec_distinct(
 ) -> str:
     col = quote_ident_exec(column)
     return (
-        f"SELECT DISTINCT {col} AS {quote_ident_exec('value')} "
+        f"SELECT DISTINCT {col} AS {quote_ident_exec('distinct_value')} "
         f"FROM {_exec_table(source_name, schema_name, table_name)} "
-        f"WHERE {col} IS NOT NULL "
-        f"ORDER BY 1 LIMIT {int(limit)}"
+        f"LIMIT {int(limit)}"
     )
 
 

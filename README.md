@@ -6,6 +6,13 @@
 
 **업데이트 이력:** [`change_log.md`](change_log.md)
 
+## 최근 변경 (2026-09-05)
+
+- **죽은 물리 DB 경로 제거.** `pg_store`·`tb_store`, `MCP_PG_*`/`MCP_TB_*`, JDBC/JRE/psycopg를 삭제했다. 허용 표는 `POST /meta/catalog`만 본다.
+- **조회 표면.** `list_tables`/`describe_table`이 논리명·설명을 주고, 카탈로그는 45초 캐시한다. `/health`에 `robo_catalog` probe가 있다.
+- **고유값.** DISTINCT 별칭은 `distinct_value`다. `IS NOT NULL`/`ORDER BY`를 붙이지 않는다.
+- 상세는 [`change_log.md`](change_log.md) 2026-09-05.
+
 ## 이 서비스가 하는 일
 
 - 에이전트에 표 목록·컬럼 상세·고유값·제한 SELECT·집계 도구를 줍니다.
@@ -19,9 +26,9 @@
 
 | 도구 | 역할 |
 | --- | --- |
-| `list_tables` | 허용 표 목록. 선택 `schema_name`. 응답에 `engine` |
-| `describe_table` | 컬럼 타입·PK·코멘트. 카탈로그 메타데이터 서빙 |
-| `get_distinct_values` | 허용 컬럼 DISTINCT. 상한은 `MCP_ROW_LIMIT` |
+| `list_tables` | 허용 표 목록. 물리 3키와 논리명·설명. 선택 `schema_name`. 응답에 `engine` |
+| `describe_table` | 표 논리명·설명, 컬럼 타입·PK·논리명·코멘트. 카탈로그 한 번만 읽음 |
+| `get_distinct_values` | 허용 컬럼 DISTINCT. 별칭 `distinct_value`. 상한은 `MCP_ROW_LIMIT` |
 | `query_table` | 조립 SELECT. `columns`, `filters` `{column,op,value}`, `order_by` `{column,dir}` |
 | `aggregate_table` | `count`/`sum`/`avg`/`max`/`min`. 선택 `filters` `{column,op,value}`. 전체 행 수는 `func=count` 그리고 column 없음 |
 
@@ -54,7 +61,7 @@ docker compose up -d --build
 curl.exe -fsS http://127.0.0.1:8110/health
 ```
 
-헬스 본문은 `backend=robo-meta-api`입니다. 물리 엔진 목록을 넣지 않습니다.
+헬스 본문은 `backend=robo-meta-api`와 `robo_catalog`(ok/unreachable)입니다. 물리 엔진 목록을 넣지 않습니다.
 
 같은 PC CLI(stdio, 기본):
 
