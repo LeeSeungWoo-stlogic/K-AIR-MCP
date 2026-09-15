@@ -5,7 +5,7 @@ from typing import Any
 from .errors import IdentError
 from .filters import OPS, Filter, Order
 
-_FORBIDDEN = frozenset({'"', "\x00", ";", "\\"})
+_FORBIDDEN = frozenset({'"', "`", "\x00", ";", "\\"})
 AGG_FUNCS = frozenset({"count", "sum", "avg", "max", "min"})
 
 
@@ -22,6 +22,11 @@ def quote_ident(name: str) -> str:
 def quote_tick(name: str) -> str:
     quote_ident(name)
     return f"`{name}`"
+
+
+def quote_sql_ident(name: str, *, ticks: bool) -> str:
+    """MindsDB(MySQL 방언)는 쌍따옴표를 문자열로 본다. 그 경로는 백틱만 쓴다."""
+    return quote_tick(name) if ticks else quote_ident(name)
 
 
 def sql_literal(value: Any) -> str:
@@ -41,8 +46,8 @@ def from_sql(schema: str, table: str, source: str | None = None) -> str:
     return f"{quote_ident(schema)}.{quote_ident(table)}"
 
 
-def _filter_sql(item: Filter, *, inline: bool, params: list[Any]) -> str:
-    col = quote_ident(item.column)
+def _filter_sql(item: Filter, *, inline: bool, ticks: bool, params: list[Any]) -> str:
+    col = quote_sql_ident(item.column, ticks=ticks)
     if item.op == "is_null":
         return f"{col} IS NULL"
     if item.op == "is_not_null":
@@ -93,17 +98,18 @@ def assemble_select_bound(
 ) -> tuple[str, tuple[Any, ...]]:
     if not columns:
         raise IdentError("columns are required")
-    col_sql = ", ".join(quote_ident(col) for col in columns)
+    ticks = bool(source) or inline
+    col_sql = ", ".join(quote_sql_ident(col, ticks=ticks) for col in columns)
     sql = f"SELECT {col_sql} FROM {from_sql(schema, table, source)}"
     params: list[Any] = []
     clauses: list[str] = []
     for item in filters:
-        clauses.append(_filter_sql(item, inline=inline, params=params))
+        clauses.append(_filter_sql(item, inline=inline, ticks=ticks, params=params))
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     if order_by:
         parts = [
-            f"{quote_ident(item.column)} {'DESC' if item.direction == 'desc' else 'ASC'}"
+            f"{quote_sql_ident(item.column, ticks=ticks)} {'DESC' if item.direction == 'desc' else 'ASC'}"
             for item in order_by
         ]
         sql += " ORDER BY " + ", ".join(parts)
@@ -114,7 +120,8 @@ def assemble_select_bound(
 def assemble_distinct(
     schema: str, table: str, column: str, limit: int, *, source: str | None = None,
 ) -> str:
-    col = quote_ident(column)
+    ticks = bool(source)
+    col = quote_sql_ident(column, ticks=ticks)
     return (
         f"SELECT DISTINCT {col} AS distinct_value "
         f"FROM {from_sql(schema, table, source)} "
@@ -137,21 +144,22 @@ def assemble_aggregate(
     name = (func or "").strip().lower()
     if name not in AGG_FUNCS:
         raise IdentError("unsupported aggregate")
+    ticks = bool(source) or inline
     if name == "count" and not column:
         expr = "COUNT(*) AS row_count"
     elif name == "count":
-        expr = f"COUNT({quote_ident(column)}) AS row_count"
+        expr = f"COUNT({quote_sql_ident(column, ticks=ticks)}) AS row_count"
     else:
         if not column:
             raise IdentError("column is required")
-        expr = f"{name.upper()}({quote_ident(column)}) AS value"
-    groups = [quote_ident(item) for item in group_by]
+        expr = f"{name.upper()}({quote_sql_ident(column, ticks=ticks)}) AS value"
+    groups = [quote_sql_ident(item, ticks=ticks) for item in group_by]
     select_list = ", ".join([*groups, expr]) if groups else expr
     sql = f"SELECT {select_list} FROM {from_sql(schema, table, source)}"
     params: list[Any] = []
     clauses: list[str] = []
     for item in filters or []:
-        clauses.append(_filter_sql(item, inline=inline, params=params))
+        clauses.append(_filter_sql(item, inline=inline, ticks=ticks, params=params))
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     if groups:

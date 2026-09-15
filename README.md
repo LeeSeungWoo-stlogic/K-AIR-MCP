@@ -9,6 +9,7 @@
 - **카탈로그 SoT를 stone-meta-api로.** `ROBO_META_URL` 별칭은 유지한다. 표별 `schema_name`을 쓴다. 소스 `source_schema` 한 칸으로 덮지 않는다.
 - **실행 경로 둘.** `query_table` / `aggregate_table` / `get_distinct_values`는 `/query_execute`. `query_table_pg`는 nk-backend 데이터소스 host/port/db로 asyncpg.
 - **등록.** 다른 PC는 SSH·소스 경로 없이 `http://<MCP호스트>:8111/mcp` + `x-api-key`.
+- **MindsDB 식별자.** `/query_execute`로 가는 컬럼·WHERE는 쌍따옴표가 아니라 백틱. MySQL 방언에서 `"컬럼"`은 문자열이라 COUNT가 0이 되었다.
 - 상세는 [`change_log.md`](change_log.md) 2026-09-15.
 
 ## 이 서비스가 하는 일
