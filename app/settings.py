@@ -25,10 +25,14 @@ def _parse_keys(raw: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class Settings:
     api_keys: tuple[str, ...]
+    stone_meta_url: str
     robo_meta_url: str
+    nk_backend_url: str
+    nk_backend_token: str
     row_limit: int = 200
     api_host: str = "0.0.0.0"
-    api_port: int = 8110
+    api_port: int = 8111
+    statement_timeout_ms: int = 60000
 
 
 def load_settings() -> Settings:
@@ -40,10 +44,27 @@ def load_settings() -> Settings:
     if row_limit < 1:
         raise SettingsError("MCP_ROW_LIMIT must be >= 1")
 
+    timeout_raw = (os.environ.get("MCP_STATEMENT_TIMEOUT_MS") or "60000").strip()
+    try:
+        statement_timeout_ms = int(timeout_raw)
+    except ValueError as exc:
+        raise SettingsError("MCP_STATEMENT_TIMEOUT_MS must be an integer") from exc
+    if statement_timeout_ms < 1:
+        raise SettingsError("MCP_STATEMENT_TIMEOUT_MS must be >= 1")
+
+    stone = (
+        (os.environ.get("STONE_META_URL") or os.environ.get("ROBO_META_URL") or "http://127.0.0.1:8096")
+        .strip()
+        .rstrip("/")
+    )
     return Settings(
         api_keys=_parse_keys(_require("MCP_API_KEYS")),
-        robo_meta_url=(os.environ.get("ROBO_META_URL") or "http://robo-meta-api:8100").rstrip("/"),
+        stone_meta_url=stone,
+        robo_meta_url=stone,
+        nk_backend_url=(os.environ.get("NK_BACKEND_URL") or "http://127.0.0.1:8000").rstrip("/"),
+        nk_backend_token=(os.environ.get("NK_BACKEND_TOKEN") or "").strip(),
         row_limit=row_limit,
         api_host=(os.environ.get("API_HOST") or "0.0.0.0").strip(),
-        api_port=int((os.environ.get("API_PORT") or "8110").strip()),
+        api_port=int((os.environ.get("API_PORT") or "8111").strip()),
+        statement_timeout_ms=statement_timeout_ms,
     )

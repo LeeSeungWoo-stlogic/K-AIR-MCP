@@ -2,43 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .engine import normalize_engine
-
-
-def catalog_engines(catalog: dict) -> set[str]:
-    sources = catalog.get("sources") if isinstance(catalog, dict) else None
-    if not sources:
-        return set()
-    engines: set[str] = set()
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        engine = normalize_engine(source.get("engine"))
-        if engine:
-            engines.add(engine)
-    return engines
-
-
-def catalog_schemas(catalog: dict, engine: str) -> set[str]:
-    sources = catalog.get("sources") if isinstance(catalog, dict) else None
-    if not sources:
-        return set()
-    schemas: set[str] = set()
-    for source in sources:
-        if not isinstance(source, dict):
-            continue
-        if normalize_engine(source.get("engine")) != engine:
-            continue
-        source_schema = str(source.get("source_schema") or "").strip()
-        if source_schema:
-            schemas.add(source_schema)
-        for table in source.get("tables") or []:
-            if not isinstance(table, dict):
-                continue
-            schema_name = str(table.get("schema_name") or source_schema or "").strip()
-            if schema_name:
-                schemas.add(schema_name)
-    return schemas
+from .engine import is_postgres
 
 
 def _slot_text(*values: object) -> str:
@@ -67,15 +31,12 @@ class AllowedTable:
     schema_name: str
     table_name: str
     engine: str
-    physical_schema: str
-    physical_table: str
     columns: tuple[str, ...]
-    physical_columns: tuple[str, ...]
     logical_name: str = ""
     description: str = ""
 
 
-def catalog_tables(catalog: dict) -> list[AllowedTable]:
+def catalog_tables(catalog: dict, *, postgres_only: bool = True) -> list[AllowedTable]:
     sources = catalog.get("sources") if isinstance(catalog, dict) else None
     if not sources:
         return []
@@ -84,9 +45,11 @@ def catalog_tables(catalog: dict) -> list[AllowedTable]:
     for source in sources:
         if not isinstance(source, dict):
             continue
-        engine = normalize_engine(source.get("engine")) or str(source.get("engine") or "generic").lower()
+        if postgres_only and not is_postgres(source.get("engine")):
+            continue
         source_name = str(source.get("source_name") or "")
         source_schema = str(source.get("source_schema") or "")
+        engine = "postgres"
         for table in source.get("tables") or []:
             if not isinstance(table, dict):
                 continue
@@ -107,10 +70,7 @@ def catalog_tables(catalog: dict) -> list[AllowedTable]:
                     schema_name=schema_name,
                     table_name=table_name,
                     engine=engine,
-                    physical_schema=schema_name,
-                    physical_table=table_name,
                     columns=tuple(catalog_cols),
-                    physical_columns=tuple(catalog_cols),
                     logical_name=catalog_table_logical_name(table),
                     description=catalog_table_description(table),
                 )
@@ -166,9 +126,9 @@ def find_catalog_table(
 
 
 def resolve_columns(table: AllowedTable, requested: list[str] | None) -> list[str]:
-    physical_by_key = {name.lower(): name for name in table.physical_columns}
+    physical_by_key = {name.lower(): name for name in table.columns}
     if not requested:
-        return list(table.physical_columns)
+        return list(table.columns)
     resolved: list[str] = []
     for name in requested:
         physical = physical_by_key.get(str(name).lower())

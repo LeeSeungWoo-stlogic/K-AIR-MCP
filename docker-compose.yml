@@ -1,41 +1,38 @@
-# 공식 MCP 서버. 기본 CLI는 stdio, 이 compose는 네트워크용 http.
-# 기동: docker compose up -d --build
-# IDE 로컬: docker exec -i kair-mcp-query python -m app.main --transport stdio
-# 네트워크: http://<이-PC-IP>:8110/mcp  + X-Api-Key (DB 비밀번호 넣지 않음)
-
-name: kair-mcp-local
+name: kair-mcp-analyze
 
 services:
-  kair-mcp-query:
+  kair-mcp-analyze:
     build:
       context: .
       dockerfile: Dockerfile
-    image: kair-mcp-query:dev
-    container_name: kair-mcp-query
+    image: kair-mcp-analyze:dev
+    container_name: kair-mcp-analyze
     restart: unless-stopped
     command: ["--transport", "http"]
     ports:
-      - "8110:8110"
+      - "8111:8111"
     env_file:
       - .env
     environment:
       API_HOST: "0.0.0.0"
-      API_PORT: "8110"
-      ROBO_META_URL: "${ROBO_META_URL:-http://robo-meta-api:8100}"
+      API_PORT: "8111"
+      STONE_META_URL: "${STONE_META_URL:-${ROBO_META_URL:-http://stone-meta-api:8096}}"
+      ROBO_META_URL: "${ROBO_META_URL:-http://stone-meta-api:8096}"
+      NK_BACKEND_URL: "${NK_BACKEND_URL:-http://nk-backend:8000}"
       MCP_API_KEYS: "${MCP_API_KEYS:?MCP_API_KEYS is required}"
       MCP_ROW_LIMIT: "${MCP_ROW_LIMIT:-200}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
-      - kair-control-plane
+      - nk-net
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8110/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8111/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
 
 networks:
-  kair-control-plane:
+  nk-net:
     external: true
-    name: kair-metadata-platform_control-plane
+    name: nk-net

@@ -1,17 +1,10 @@
 {
   "mcpServers": {
-    "kair-query": {
-      "command": "docker",
-      "args": [
-        "exec",
-        "-i",
-        "kair-mcp-query",
-        "python",
-        "-m",
-        "app.main",
-        "--transport",
-        "stdio"
-      ]
+    "kair-analyze": {
+      "url": "http://<MCP띄운호스트>:8111/mcp",
+      "headers": {
+        "x-api-key": "<MCP_API_KEYS 값만>"
+      }
     }
   }
 }

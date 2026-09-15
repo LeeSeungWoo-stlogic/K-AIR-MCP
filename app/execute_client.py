@@ -1,82 +1,67 @@
+"""stone-meta-api `POST /query_execute` — 서빙 승인 표를 그 창구로만 실행한다."""
 from __future__ import annotations
 
 from typing import Any
 
 import httpx
 
-_DEFAULT_TIMEOUT_S = 60
-_ERROR_RETURN_GRACE_S = 30
-
 
 class ExecuteError(RuntimeError):
     pass
 
 
-def _http_timeout_s(timeout_s: int | None) -> float:
-    applied = timeout_s if timeout_s is not None else _DEFAULT_TIMEOUT_S
-    return float(max(1, applied) + _ERROR_RETURN_GRACE_S)
-
-
-def _error_message(payload: object, status_code: int) -> str:
-    if isinstance(payload, dict):
-        for key in ("error", "message", "detail"):
-            value = payload.get(key)
-            if isinstance(value, dict):
-                nested = value.get("message") or value.get("code")
-                if nested:
-                    return str(nested)
-            if value:
-                return str(value)
-        status = payload.get("status")
-        if status:
-            return str(status)
-    return f"query_execute HTTP {status_code}"
-
-
-def rows_to_dicts(columns: list[str], rows: list[list[Any]]) -> list[dict[str, Any]]:
+def rows_as_dicts(payload: dict) -> list[dict[str, Any]]:
+    columns = payload.get("columns") or []
+    raw_rows = payload.get("rows") or []
+    if not isinstance(columns, list) or not isinstance(raw_rows, list):
+        return []
+    names = [str(col) for col in columns]
     out: list[dict[str, Any]] = []
-    for row in rows:
-        item: dict[str, Any] = {}
-        for index, name in enumerate(columns):
-            item[name] = row[index] if index < len(row) else None
-        out.append(item)
+    for row in raw_rows:
+        if isinstance(row, dict):
+            out.append(row)
+            continue
+        if isinstance(row, list):
+            out.append({names[i]: row[i] for i in range(min(len(names), len(row)))})
     return out
 
 
-async def execute_query(
-    robo_meta_url: str,
+async def query_execute(
+    stone_meta_url: str,
     sql: str,
     *,
     max_rows: int,
-    timeout_s: int | None = None,
+    timeout_s: int,
 ) -> list[dict[str, Any]]:
-    url = f"{robo_meta_url.rstrip('/')}/query_execute"
-    body: dict[str, Any] = {"sql": sql, "max_rows": max_rows}
-    if timeout_s is not None:
-        body["timeout_s"] = timeout_s
+    url = f"{stone_meta_url.rstrip('/')}/query_execute"
+    body = {"sql": sql, "timeout_s": timeout_s, "max_rows": max_rows}
     try:
-        async with httpx.AsyncClient(timeout=_http_timeout_s(timeout_s)) as client:
+        async with httpx.AsyncClient(timeout=float(timeout_s) + 10.0) as client:
             response = await client.post(url, json=body)
     except httpx.HTTPError as exc:
-        detail = str(exc).strip() or f"{type(exc).__name__} (request timeout or connection closed)"
-        raise ExecuteError(f"query_execute request failed: {detail}") from exc
-
-    payload: object
-    try:
-        payload = response.json()
-    except Exception:
-        payload = None
-
+        raise ExecuteError(f"query_execute request failed: {exc}") from exc
+    if response.status_code == 400:
+        detail = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+        msg = detail.get("detail") if isinstance(detail, dict) else response.text
+        raise ExecuteError(str(msg) or "query_execute HTTP 400")
     if response.status_code != 200:
-        raise ExecuteError(_error_message(payload, response.status_code))
+        raise ExecuteError(f"query_execute HTTP {response.status_code}")
+    payload = response.json()
     if not isinstance(payload, dict):
         raise ExecuteError("query_execute response is not an object")
     status = str(payload.get("status") or "")
     if status != "ok":
-        raise ExecuteError(_error_message(payload, response.status_code))
+        raise ExecuteError(str(payload.get("error") or f"query_execute status={status or 'unknown'}"))
+    return rows_as_dicts(payload)
 
-    columns = [str(name) for name in (payload.get("columns") or [])]
-    raw_rows = payload.get("rows") or []
-    if not isinstance(raw_rows, list):
-        raise ExecuteError("query_execute rows is not an array")
-    return rows_to_dicts(columns, raw_rows)
+
+async def probe_execute(stone_meta_url: str) -> str:
+    url = f"{stone_meta_url.rstrip('/')}/health"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(url)
+    except httpx.HTTPError:
+        return "unreachable"
+    if response.status_code != 200:
+        return "unreachable"
+    return "ok"

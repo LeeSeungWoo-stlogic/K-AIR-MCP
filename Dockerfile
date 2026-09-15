@@ -10,12 +10,11 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app /app/app
-COPY tests /app/tests
 
-EXPOSE 8110
+EXPOSE 8111
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD curl -fsS http://127.0.0.1:8110/health || exit 1
+  CMD curl -fsS http://127.0.0.1:8111/health || exit 1
 
 ENTRYPOINT ["python", "-m", "app.main"]
 CMD ["--transport", "http"]

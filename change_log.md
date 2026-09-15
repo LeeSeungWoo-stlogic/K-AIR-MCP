@@ -1,118 +1,27 @@
 # Change log
 
-K-AIR MCP 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
+K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
-## 2026-09-05
+## 2026-09-15
 
-### 죽은 물리 DB 경로 제거
+### stone-meta-api 카탈로그·실행 동기화
 
-조회 경로가 쓰지 않던 Postgres/Tibero 직접 접속 코드를 삭제한다. `MCP_PG_*`·`MCP_TB_*` 설정, `pg_store`·`tb_store`, `intersect_catalog`, JDBC/JRE/psycopg 의존을 제거한다. 허용 표는 `POST /meta/catalog`만 본다.
+허용 표는 `stone-meta-api` `POST /meta/catalog`만 본다. `STONE_META_URL`을 쓰고, `ROBO_META_URL`은 별칭이다. 표별 `schema_name`을 쓰며 소스 `source_schema` 한 칸으로 덮지 않는다.
 
-관련: `app/settings.py` · `app/intersect.py` · `app/runtime.py` · `requirements.txt` · `Dockerfile` · `docs/GUIDE_OA_반입준비.md`
+`query_table` · `aggregate_table` · `get_distinct_values`의 SELECT는 `POST /query_execute`(MindsDB)로 실행한다. 3단 수식은 카탈로그 소스명·표 스키마·표 이름을 유지한다.
 
-### 카탈로그 조회 표면
+관련: `app/catalog_client.py` · `app/execute_client.py` · `app/intersect.py` · `app/sqlutil.py` · `app/tools.py` · `app/settings.py` · `app/main.py`
 
-`list_tables`·`describe_table`이 카탈로그 `logical_name`/`description`을 준다. `describe_table`은 카탈로그를 한 번만 읽는다. `catalog_client`는 45초 TTL 캐시와 `/health`용 `probe_catalog`를 둔다. DISTINCT 별칭은 `distinct_value`이며 `IS NOT NULL`/`ORDER BY`를 붙이지 않는다.
+### Postgres 직조회 `query_table_pg`
 
-관련: `app/catalog_client.py` · `app/tools.py` · `app/sqlutil.py` · `app/main.py` · `tests/test_query_surface.py`
+MindsDB를 거치지 않는 조립 SELECT를 둔다. 접속 좌표는 nk-backend `GET /air-swmm/data-fabric/api/datasources`에서 읽고, 스키마는 카탈로그 표 단위다. id/pw는 `set_credentials` 또는 `MCP_DS_USER_<소스>` / `MCP_DS_PASSWORD_<소스>`다. 카탈로그·데이터소스 목록에 비밀번호를 넣지 않는다.
 
----
+관련: `app/pg_runner.py` · `app/sources_client.py` · `app/credentials.py` · `app/tools.py` · `app/main.py` · `tests/test_sqlutil_paths.py` · `tests/test_intersect_schema.py` · `tests/test_credentials_env.py`
 
-## 2026-09-03
+### 다른 PC HTTP 등록
 
-### `/query_execute` 연결 오류 메시지
+같은 네트워크 클라이언트는 SSH·cwd·로컬 Docker 없이 `http://<MCP호스트>:8111/mcp` + `x-api-key`만 넣는다. 컨테이너는 대상 호스트 `nk-net`의 `kair-mcp-analyze`다.
 
-`httpx.HTTPError`의 `str(exc)`가 비면 타입명을 넣는다. 타임아웃·연결 종료가 빈 실패 사유로 나오지 않게 한다.
+관련: `mcp.cursor.example.json` · `mcp.cursor.http.example.json` · `docker-compose.yml` · `README.md`
 
-관련: `app/execute_client.py`
-
----
-
-## 2026-09-02
-
-### robo-meta-api 단일 진실 공급원(SoT) 연계 및 물리 DB 결속 제거
-
-카탈로그 서빙 및 질의 실행을 `robo-meta-api` 단일 창구로 정규화.
-
-- `list_tables` 및 `describe_table`이 특정 로컬 DB(Postgres `pg_class`)를 실사하던 물리 교집합 로직을 제거하고, `robo-meta-api`의 `POST /meta/catalog` 메타데이터를 직접 서빙
-- 플랫폼에 등록된 임의의 N개 데이터소스(Postgres, Tibero 등)를 별도 물리 DB 연결 정보 없이 동시 서빙 가능
-- `.env` 및 `docker-compose.yml`에서 필수였던 `MCP_PG_*`, `MCP_TB_*` 제거. `MCP_API_KEYS`와 `ROBO_META_URL`만으로 기동
-- 헬스 본문은 `backend=robo-meta-api`. 다중 소스 카탈로그 계약 테스트 추가
-
-관련: `app/settings.py` · `app/intersect.py` · `app/tools.py` · `app/main.py` · `docker-compose.yml` · `.env.example` · `tests/test_multi_source_catalog.py`
-
----
-
-## 2026-08-31
-
-### aggregate_table 필터
-
-`aggregate_table`에 `query_table`과 같은 선택 `filters` `{column,op,value}`를 둔다. SQL은 `WHERE` 다음 `GROUP BY`.
-
-관련: `app/sqlutil.py` · `app/tools.py` · `app/main.py`
-
-### 행 상한 하드캡 해제
-
-`MCP_ROW_LIMIT`를 서버가 200으로 자르지 않는다. env 값이 `query_table` · `aggregate_table` · `get_distinct_values` 상한이다.
-
-관련: `app/settings.py` · `app/tools.py`
-
----
-
-## 2026-08-28
-
-### 실행면 `/query_execute`
-
-`query_table` · `get_distinct_values` · `aggregate_table`의 SELECT를 데이터 Postgres 직접 실행에서 `robo-meta-api` `POST /query_execute`로 옮김. 도구 인자·`mcp.json` 등록은 그대로.
-
-- SQL은 완성 문자열만. 식별자 백틱 3단 수식, 필터 리터럴 인라인, `LIMIT n`. `%s` 없음
-- HTTP 오류와 본문 `status != ok`는 도구 오류. 빈 `rows`를 성공 `items=[]`로 바꾸지 않음
-- `list_tables` · `describe_table` · `MCP_PG_*` 허용 게이트는 유지. `ROBO_META_URL`이 catalog·execute 공통
-
-관련: `app/execute_client.py` · `app/sqlutil.py` · `app/tools.py` · `tests/test_execute_client.py`
-
-문서: `README.md` — 실행면은 `/query_execute`, `MCP_PG_*`는 목록 게이트, `MCP_ROW_LIMIT`는 env 그대로.
-
----
-
-## 2026-08-27
-
-### 조회 MCP 서버
-
-공식 Python SDK `mcp` FastMCP로 창구 하나를 둠. 포털 `POST /mcp` 목업을 정본으로 복제하지 않음.
-
-- 전송: CLI 기본 **stdio**, compose는 **Streamable HTTP** `--transport http` · `/mcp`
-- 도구: `list_tables` · `describe_table` · `get_distinct_values` · `query_table` · `aggregate_table`
-- 허용 표 = `POST /meta/catalog` ∩ 엔진 원천 실존 표. 자유 SQL·`SELECT` 접두 검사 없음
-- `filters`/`order_by`는 구조화 객체만. 행 상한 200. 읽기 전용·`statement_timeout` 15초
-- HTTP `X-Api-Key` (`MCP_API_KEYS`). DB 비밀번호는 도구·등록 JSON에 없음
-
-관련: `app/main.py` · `app/tools.py` · `app/sqlutil.py` · `docker-compose.yml`
-
-### LAN HTTP
-
-호스트 바인드를 `127.0.0.1:8110`에서 `0.0.0.0:8110`으로 바꿈. 다른 PC는 `http://<IP>:8110/mcp` + 키만 등록.
-
-관련: `mcp.cursor.example.json` · `mcp.cursor.http.example.json`
-
-### 카탈로그 engine 분기
-
-`sources[].engine`으로 원천을 먼저 가름. 도구는 나누지 않음.
-
-- `postgresql`/`postgres`/`postgis` → 마트(Postgres)
-- `tibero`/`oracle` → 수집 Tibero. 같은 스키마·표 이름이 Postgres에 있어도 섞지 않음
-- 엔진 없음·미지원 값은 목록에서 제외
-- Tibero SQL은 `FETCH FIRST n ROWS ONLY`
-
-관련: `app/engine.py` · `app/intersect.py` · `app/tb_store.py` · `tests/test_engine.py` · `tests/test_intersect.py`
-
-### Tibero JDBC 조회 · 카탈로그 선행
-
-카탈로그 `sources[].engine`을 먼저 읽고 그 엔진 원천만 연다. 분석 Postgres가 없거나 5434가 꺼져 있으면 짧게 실패하고 기동을 유지한다. Tibero 목록·코멘트는 `driver/tibero-jdbc.jar` mount + JDBC. 행 조회는 2026-08-28에 `/query_execute`로 옮김. JAR은 Git에 없다.
-
-관련: `app/tb_store.py` · `app/tools.py` · `app/main.py` · `app/settings.py` · `docker-compose.yml` · `Dockerfile` · `driver/README.md`
-
-### 문서
-
-- `README.md`는 서비스·기능 안내
-- 날짜별 작업 요약은 이 파일
+문서: `README.md` — 실행 경로 둘, HTTP 등록, `query_table_pg` 자격 증명.

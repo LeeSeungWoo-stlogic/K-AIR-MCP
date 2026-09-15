@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from .engine import POSTGRES, TIBERO
 from .errors import IdentError
 from .filters import OPS, Filter, Order
 
 _FORBIDDEN = frozenset({'"', "\x00", ";", "\\"})
+AGG_FUNCS = frozenset({"count", "sum", "avg", "max", "min"})
 
 
 def quote_ident(name: str) -> str:
@@ -19,6 +19,46 @@ def quote_ident(name: str) -> str:
     return f'"{name}"'
 
 
+def quote_tick(name: str) -> str:
+    quote_ident(name)
+    return f"`{name}`"
+
+
+def sql_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    text = str(value).replace("'", "''")
+    return f"'{text}'"
+
+
+def from_sql(schema: str, table: str, source: str | None = None) -> str:
+    if source:
+        return f"{quote_tick(source)}.{quote_tick(schema)}.{quote_tick(table)}"
+    return f"{quote_ident(schema)}.{quote_ident(table)}"
+
+
+def _filter_sql(item: Filter, *, inline: bool, params: list[Any]) -> str:
+    col = quote_ident(item.column)
+    if item.op == "is_null":
+        return f"{col} IS NULL"
+    if item.op == "is_not_null":
+        return f"{col} IS NOT NULL"
+    if item.op == "in":
+        values = list(item.value)
+        if inline:
+            return f"{col} IN ({', '.join(sql_literal(v) for v in values)})"
+        params.extend(values)
+        return f"{col} IN ({', '.join(['%s'] * len(values))})"
+    if inline:
+        return f"{col} {OPS[item.op]} {sql_literal(item.value)}"
+    params.append(item.value)
+    return f"{col} {OPS[item.op]} %s"
+
+
 def clamp_limit(value: object, default: int, maximum: int) -> int:
     try:
         parsed = int(value)  # type: ignore[arg-type]
@@ -27,21 +67,17 @@ def clamp_limit(value: object, default: int, maximum: int) -> int:
     return max(1, min(parsed, maximum))
 
 
-AGG_FUNCS = frozenset({"count", "sum", "avg", "max", "min"})
-
-
-def limit_clause(limit: int, dialect: str = POSTGRES) -> str:
-    n = int(limit)
-    if dialect == TIBERO:
-        return f" FETCH FIRST {n} ROWS ONLY"
-    if dialect != POSTGRES:
-        raise IdentError("unsupported dialect")
-    return f" LIMIT {n}"
-
-
-def assemble_select(schema: str, table: str, columns: list[str], limit: int, dialect: str = POSTGRES) -> str:
-    sql, _params = assemble_select_bound(schema, table, columns, [], [], limit, dialect)
-    return sql
+def _to_asyncpg(sql: str) -> str:
+    parts: list[str] = []
+    index = 0
+    remaining = sql
+    while "%s" in remaining:
+        before, remaining = remaining.split("%s", 1)
+        index += 1
+        parts.append(before)
+        parts.append(f"${index}")
+    parts.append(remaining)
+    return "".join(parts)
 
 
 def assemble_select_bound(
@@ -51,28 +87,18 @@ def assemble_select_bound(
     filters: list[Filter],
     order_by: list[Order],
     limit: int,
-    dialect: str = POSTGRES,
+    *,
+    source: str | None = None,
+    inline: bool = False,
 ) -> tuple[str, tuple[Any, ...]]:
     if not columns:
         raise IdentError("columns are required")
     col_sql = ", ".join(quote_ident(col) for col in columns)
-    sql = f"SELECT {col_sql} FROM {quote_ident(schema)}.{quote_ident(table)}"
+    sql = f"SELECT {col_sql} FROM {from_sql(schema, table, source)}"
     params: list[Any] = []
     clauses: list[str] = []
-    ph = "?" if dialect == TIBERO else "%s"
     for item in filters:
-        col = quote_ident(item.column)
-        if item.op == "is_null":
-            clauses.append(f"{col} IS NULL")
-        elif item.op == "is_not_null":
-            clauses.append(f"{col} IS NOT NULL")
-        elif item.op == "in":
-            values = list(item.value)
-            clauses.append(f"{col} IN ({', '.join([ph] * len(values))})")
-            params.extend(values)
-        else:
-            clauses.append(f"{col} {OPS[item.op]} {ph}")
-            params.append(item.value)
+        clauses.append(_filter_sql(item, inline=inline, params=params))
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     if order_by:
@@ -81,18 +107,18 @@ def assemble_select_bound(
             for item in order_by
         ]
         sql += " ORDER BY " + ", ".join(parts)
-    return sql + limit_clause(limit, dialect), tuple(params)
+    sql += f" LIMIT {int(limit)}"
+    return _to_asyncpg(sql), tuple(params)
 
 
 def assemble_distinct(
-    schema: str, table: str, column: str, limit: int, dialect: str = POSTGRES
+    schema: str, table: str, column: str, limit: int, *, source: str | None = None,
 ) -> str:
     col = quote_ident(column)
-    value_alias = quote_ident("distinct_value") if dialect == TIBERO else "distinct_value"
     return (
-        f"SELECT DISTINCT {col} AS {value_alias} "
-        f"FROM {quote_ident(schema)}.{quote_ident(table)}"
-        f"{limit_clause(limit, dialect)}"
+        f"SELECT DISTINCT {col} AS distinct_value "
+        f"FROM {from_sql(schema, table, source)} "
+        f"LIMIT {int(limit)}"
     )
 
 
@@ -103,148 +129,32 @@ def assemble_aggregate(
     column: str | None,
     group_by: list[str],
     limit: int,
-    dialect: str = POSTGRES,
-) -> str:
+    filters: list[Filter] | None = None,
+    *,
+    source: str | None = None,
+    inline: bool = False,
+) -> tuple[str, tuple[Any, ...]]:
     name = (func or "").strip().lower()
     if name not in AGG_FUNCS:
         raise IdentError("unsupported aggregate")
-    count_alias = quote_ident("row_count") if dialect == TIBERO else "row_count"
-    value_alias = quote_ident("value") if dialect == TIBERO else "value"
     if name == "count" and not column:
-        expr = f"COUNT(*) AS {count_alias}"
+        expr = "COUNT(*) AS row_count"
     elif name == "count":
-        expr = f"COUNT({quote_ident(column)}) AS {count_alias}"
+        expr = f"COUNT({quote_ident(column)}) AS row_count"
     else:
         if not column:
             raise IdentError("column is required")
-        expr = f"{name.upper()}({quote_ident(column)}) AS {value_alias}"
+        expr = f"{name.upper()}({quote_ident(column)}) AS value"
     groups = [quote_ident(item) for item in group_by]
     select_list = ", ".join([*groups, expr]) if groups else expr
-    sql = f"SELECT {select_list} FROM {quote_ident(schema)}.{quote_ident(table)}"
-    if groups:
-        sql += " GROUP BY " + ", ".join(groups)
-    return sql + limit_clause(limit, dialect)
-
-
-_EXEC_FORBIDDEN = frozenset({"`", "\x00", ";", "\\", '"'})
-
-
-def quote_ident_exec(name: str) -> str:
-    if not isinstance(name, str) or not name.strip():
-        raise IdentError("identifier is required")
-    if len(name) > 128:
-        raise IdentError("identifier is too long")
-    if any(ch in name for ch in _EXEC_FORBIDDEN) or "." in name:
-        raise IdentError("invalid identifier")
-    return f"`{name}`"
-
-
-def sql_literal(value: Any) -> str:
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
-            raise IdentError("invalid numeric literal")
-        return repr(value)
-    if value is None:
-        raise IdentError("literal value is required")
-    text = str(value)
-    if "\x00" in text:
-        raise IdentError("invalid literal")
-    return "'" + text.replace("'", "''") + "'"
-
-
-def _exec_table(source_name: str, schema_name: str, table_name: str) -> str:
-    return (
-        f"{quote_ident_exec(source_name)}.{quote_ident_exec(schema_name)}."
-        f"{quote_ident_exec(table_name)}"
-    )
-
-
-def assemble_exec_select(
-    source_name: str,
-    schema_name: str,
-    table_name: str,
-    columns: list[str],
-    filters: list[Filter],
-    order_by: list[Order],
-    limit: int,
-) -> str:
-    if not columns:
-        raise IdentError("columns are required")
-    col_sql = ", ".join(quote_ident_exec(col) for col in columns)
-    sql = f"SELECT {col_sql} FROM {_exec_table(source_name, schema_name, table_name)}"
-    sql += _exec_where(filters)
-    if order_by:
-        parts = [
-            f"{quote_ident_exec(item.column)} {'DESC' if item.direction == 'desc' else 'ASC'}"
-            for item in order_by
-        ]
-        sql += " ORDER BY " + ", ".join(parts)
-    return sql + f" LIMIT {int(limit)}"
-
-
-def _exec_where(filters: list[Filter]) -> str:
+    sql = f"SELECT {select_list} FROM {from_sql(schema, table, source)}"
+    params: list[Any] = []
     clauses: list[str] = []
-    for item in filters:
-        col = quote_ident_exec(item.column)
-        if item.op == "is_null":
-            clauses.append(f"{col} IS NULL")
-        elif item.op == "is_not_null":
-            clauses.append(f"{col} IS NOT NULL")
-        elif item.op == "in":
-            values = list(item.value)
-            literals = ", ".join(sql_literal(val) for val in values)
-            clauses.append(f"{col} IN ({literals})")
-        else:
-            clauses.append(f"{col} {OPS[item.op]} {sql_literal(item.value)}")
-    if not clauses:
-        return ""
-    return " WHERE " + " AND ".join(clauses)
-
-
-def assemble_exec_distinct(
-    source_name: str,
-    schema_name: str,
-    table_name: str,
-    column: str,
-    limit: int,
-) -> str:
-    col = quote_ident_exec(column)
-    return (
-        f"SELECT DISTINCT {col} AS {quote_ident_exec('distinct_value')} "
-        f"FROM {_exec_table(source_name, schema_name, table_name)} "
-        f"LIMIT {int(limit)}"
-    )
-
-
-def assemble_exec_aggregate(
-    source_name: str,
-    schema_name: str,
-    table_name: str,
-    func: str,
-    column: str | None,
-    group_by: list[str],
-    limit: int,
-    filters: list[Filter] | None = None,
-) -> str:
-    name = (func or "").strip().lower()
-    if name not in AGG_FUNCS:
-        raise IdentError("unsupported aggregate")
-    if name == "count" and not column:
-        expr = f"COUNT(*) AS {quote_ident_exec('row_count')}"
-    elif name == "count":
-        expr = f"COUNT({quote_ident_exec(column)}) AS {quote_ident_exec('row_count')}"
-    else:
-        if not column:
-            raise IdentError("column is required")
-        expr = f"{name.upper()}({quote_ident_exec(column)}) AS {quote_ident_exec('value')}"
-    groups = [quote_ident_exec(item) for item in group_by]
-    select_list = ", ".join([*groups, expr]) if groups else expr
-    sql = f"SELECT {select_list} FROM {_exec_table(source_name, schema_name, table_name)}"
-    sql += _exec_where(filters or [])
+    for item in filters or []:
+        clauses.append(_filter_sql(item, inline=inline, params=params))
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     if groups:
         sql += " GROUP BY " + ", ".join(groups)
-    return sql + f" LIMIT {int(limit)}"
+    sql += f" LIMIT {int(limit)}"
+    return _to_asyncpg(sql), tuple(params)

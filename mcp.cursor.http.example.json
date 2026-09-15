@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "kair-query": {
-      "url": "http://이PC의IP:8110/mcp",
+    "kair-analyze": {
+      "url": "http://<MCP띄운호스트>:8111/mcp",
       "headers": {
-        "X-Api-Key": "여기에_MCP_API_KEYS_값만"
+        "x-api-key": "<MCP_API_KEYS 값만>"
       }
     }
   }

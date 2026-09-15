@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import catalog_client, tools
+from . import catalog_client, execute_client, sources_client, tools
 from .auth import key_ok
 from .cli import parse_args
 from .runtime import RT
@@ -21,19 +21,21 @@ from .settings import SettingsError, load_settings
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-log = logging.getLogger("kair-mcp-query")
+log = logging.getLogger("kair-mcp-analyze")
 
 mcp = FastMCP(
-    name="kair-mcp-query",
+    name="kair-mcp-analyze",
     instructions=(
-        "K-water 데이터허브 조회 MCP. robo-meta-api 카탈로그를 기반으로 테이블을 조회하고 "
-        "query_execute를 통해 안전하게 데이터를 질의합니다. "
-        "행은 query_table, 건수·합·평균은 aggregate_table, 컬럼 상세는 describe_table. "
-        "SQL 문자열은 직접 받지 않으며, 안전한 구조화 파라미터로 실행됩니다. "
-        "DB 접속 정보는 도구 결과에 노출되지 않습니다."
+        "K-water 데이터허브 조회 MCP. "
+        "표 목록은 stone-meta-api POST /meta/catalog. "
+        "query_table / aggregate_table / get_distinct_values 는 stone-meta POST /query_execute (MindsDB). "
+        "query_table_pg 는 nk-backend 데이터소스 좌표로 원천 Postgres에 직접 SELECT. "
+        "query_table_pg 전에 set_credentials 가 필요하다. "
+        "SQL 문자열은 받지 않으며, 허용된 한 표만 조회한다. "
+        "같은 소스라도 스키마가 다르면 표별로 schema_name 을 쓴다."
     ),
     host=os.environ.get("API_HOST", "0.0.0.0"),
-    port=int(os.environ.get("API_PORT", "8110")),
+    port=int(os.environ.get("API_PORT", "8111")),
     streamable_http_path="/mcp",
     stateless_http=True,
 )
@@ -45,19 +47,39 @@ def _runtime():
     return RT.settings
 
 
+def _store():
+    return RT.credentials
+
+
+@mcp.tool()
+async def list_sources() -> dict:
+    """카탈로그 소스·스키마와 data-fabric 접속 좌표(host/port/db). 비밀번호는 없다."""
+    return await tools.list_sources(_runtime(), _store())
+
+
+@mcp.tool()
+async def set_credentials(source_name: str, user: str, password: str) -> dict:
+    """query_table_pg 용 원천 Postgres 계정. 재시작 후에도 쓰려면 mcp.json env 의 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
+    return await tools.set_credentials(_runtime(), _store(), source_name, user, password)
+
+
+@mcp.tool()
+async def clear_credentials(source_name: str | None = None) -> dict:
+    """넣어 둔 계정을 지운다. source_name 이 없으면 전부 지운다."""
+    return await tools.clear_credentials(_store(), source_name)
+
+
 @mcp.tool()
 async def list_tables(schema_name: str | None = None) -> dict:
-    """카탈로그 표 목록. 물리 3키와 논리명·설명을 준다. schema_name 으로 걸 수 있다."""
-    settings = _runtime()
-    return await tools.list_tables(settings, schema_name=schema_name)
+    """카탈로그의 Postgres 표 목록. schema_name 으로 걸 수 있다."""
+    return await tools.list_tables(_runtime(), schema_name=schema_name)
 
 
 @mcp.tool()
 async def describe_table(source_name: str, schema_name: str, table_name: str) -> dict:
-    """허용된 표의 논리명·컬럼 타입·PK·코멘트를 준다. 없는 한글 설명은 비운다."""
-    settings = _runtime()
+    """허용된 표의 논리명·컬럼 타입·PK·코멘트를 준다."""
     return await tools.describe_table(
-        settings,
+        _runtime(),
         {"source_name": source_name, "schema_name": schema_name, "table_name": table_name},
     )
 
@@ -70,10 +92,10 @@ async def get_distinct_values(
     column_name: str,
     limit: int = 50,
 ) -> dict:
-    """허용된 컬럼의 고유값 목록을 조회한다. 서버가 DISTINCT 쿼리를 조립하여 실행한다."""
-    settings = _runtime()
+    """허용된 컬럼의 고유값. stone-meta-api /query_execute 로 조회한다."""
     return await tools.get_distinct_values(
-        settings,
+        _runtime(),
+        _store(),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -94,10 +116,36 @@ async def query_table(
     order_by: list[dict] | None = None,
     limit: int = 50,
 ) -> dict:
-    """허용된 표에서 서버가 조립한 SELECT만 실행한다. filters/order_by 는 구조화 객체만 허용된다."""
-    settings = _runtime()
+    """허용된 한 표에서 조립한 SELECT를 stone-meta-api /query_execute (MindsDB) 로 실행한다."""
     return await tools.query_table(
-        settings,
+        _runtime(),
+        _store(),
+        {
+            "source_name": source_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "columns": columns,
+            "filters": filters,
+            "order_by": order_by,
+            "limit": limit,
+        },
+    )
+
+
+@mcp.tool()
+async def query_table_pg(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    columns: list[str] | None = None,
+    filters: list[dict] | None = None,
+    order_by: list[dict] | None = None,
+    limit: int = 50,
+) -> dict:
+    """허용된 한 표에서 조립한 SELECT를 원천 Postgres에 직접 실행한다. set_credentials 필요. MindsDB를 거치지 않는다."""
+    return await tools.query_table_pg(
+        _runtime(),
+        _store(),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -121,10 +169,10 @@ async def aggregate_table(
     filters: list[dict] | None = None,
     limit: int = 50,
 ) -> dict:
-    """허용된 표에서 count/sum/avg/max/min 집계를 조립하여 실행한다. 전체 행 수는 func=count, column 없음."""
-    settings = _runtime()
+    """허용된 한 표에서 count/sum/avg/max/min 을 조립해 /query_execute 로 실행한다."""
     return await tools.aggregate_table(
-        settings,
+        _runtime(),
+        _store(),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -140,16 +188,27 @@ async def aggregate_table(
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> Response:
-    robo_catalog = "unreachable"
+    stone_catalog = "unreachable"
+    stone_execute = "unreachable"
+    nk_datasources = "unreachable"
     if RT.settings is not None:
-        robo_catalog = await catalog_client.probe_catalog(RT.settings.robo_meta_url)
+        stone_catalog = await catalog_client.probe_catalog(RT.settings.stone_meta_url)
+        stone_execute = await execute_client.probe_execute(RT.settings.stone_meta_url)
+        nk_datasources = await sources_client.probe_sources(
+            RT.settings.nk_backend_url,
+            RT.settings.nk_backend_token,
+        )
     return JSONResponse(
         {
             "status": "ok",
-            "server": "kair-mcp-query",
+            "server": "kair-mcp-analyze",
             "transport": "streamable-http",
-            "backend": "robo-meta-api",
-            "robo_catalog": robo_catalog,
+            "catalog": "stone-meta-api /meta/catalog",
+            "query": "stone-meta-api /query_execute",
+            "query_pg": "nk-backend datasources + asyncpg",
+            "stone_catalog": stone_catalog,
+            "stone_execute": stone_execute,
+            "nk_datasources": nk_datasources,
         }
     )
 
@@ -176,7 +235,13 @@ async def _open_runtime() -> None:
     except SettingsError as exc:
         raise SystemExit(str(exc)) from exc
     RT.settings = settings
-    log.info("mcp ready robo=%s", settings.robo_meta_url)
+    seeded = RT.credentials.load_environ()
+    log.info(
+        "mcp ready stone=%s nk=%s env_credentials=%s",
+        settings.stone_meta_url,
+        settings.nk_backend_url,
+        ",".join(seeded) or "none",
+    )
 
 
 async def serve_http() -> None:
@@ -188,6 +253,7 @@ async def serve_http() -> None:
         await uvicorn.Server(config).serve()
     finally:
         RT.settings = None
+        RT.credentials.clear()
 
 
 async def serve_stdio() -> None:
@@ -196,6 +262,7 @@ async def serve_stdio() -> None:
         await mcp.run_stdio_async()
     finally:
         RT.settings = None
+        RT.credentials.clear()
 
 
 def run(argv: list[str] | None = None) -> None:
