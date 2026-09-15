@@ -60,6 +60,24 @@ def test_assemble_aggregate_mindsdb_does_not_quote_columns_as_strings():
     assert params == ()
 
 
+def test_assemble_aggregate_pg_uses_schema_quotes_and_placeholders():
+    sql, params = assemble_aggregate(
+        "rwis_mart",
+        "dim_tag",
+        "count",
+        None,
+        [],
+        1,
+        [Filter(column="suj_name", op="eq", value="충주정수장")],
+        source=None,
+        inline=False,
+    )
+    assert 'SELECT COUNT(*) AS row_count FROM "rwis_mart"."dim_tag"' in sql
+    assert '"suj_name" = $1' in sql
+    assert "`suj_name`" not in sql
+    assert params == ("충주정수장",)
+
+
 def test_assemble_distinct_mindsdb_uses_ticks():
     sql = assemble_distinct("rwis", "some_tb", "suj_name", 10, source="RWIS")
     assert "`suj_name`" in sql

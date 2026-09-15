@@ -29,8 +29,9 @@ mcp = FastMCP(
         "K-water 데이터허브 조회 MCP. "
         "표 목록은 stone-meta-api POST /meta/catalog. "
         "query_table / aggregate_table / get_distinct_values 는 stone-meta POST /query_execute (MindsDB). "
-        "query_table_pg 는 nk-backend 데이터소스 좌표로 원천 Postgres에 직접 SELECT. "
-        "query_table_pg 전에 set_credentials 가 필요하다. "
+        "query_table_pg / aggregate_table_pg 는 nk-backend 데이터소스 좌표로 원천 Postgres에 직접 실행. "
+        "PG 직조회 전에 set_credentials 가 필요하다. "
+        "쓰기는 없고, SELECT 집계(count/sum/avg/max/min)는 된다. "
         "SQL 문자열은 받지 않으며, 허용된 한 표만 조회한다. "
         "같은 소스라도 스키마가 다르면 표별로 schema_name 을 쓴다."
     ),
@@ -59,7 +60,7 @@ async def list_sources() -> dict:
 
 @mcp.tool()
 async def set_credentials(source_name: str, user: str, password: str) -> dict:
-    """query_table_pg 용 원천 Postgres 계정. 재시작 후에도 쓰려면 mcp.json env 의 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
+    """query_table_pg / aggregate_table_pg 용 원천 Postgres 계정. 재시작 후에도 쓰려면 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
     return await tools.set_credentials(_runtime(), _store(), source_name, user, password)
 
 
@@ -142,7 +143,7 @@ async def query_table_pg(
     order_by: list[dict] | None = None,
     limit: int = 50,
 ) -> dict:
-    """허용된 한 표에서 조립한 SELECT를 원천 Postgres에 직접 실행한다. set_credentials 필요. MindsDB를 거치지 않는다."""
+    """허용된 한 표에서 조립한 SELECT를 원천 Postgres에 직접 실행한다. set_credentials 필요. INSERT/UPDATE/DDL 없음."""
     return await tools.query_table_pg(
         _runtime(),
         _store(),
@@ -171,6 +172,34 @@ async def aggregate_table(
 ) -> dict:
     """허용된 한 표에서 count/sum/avg/max/min 을 조립해 /query_execute 로 실행한다."""
     return await tools.aggregate_table(
+        _runtime(),
+        _store(),
+        {
+            "source_name": source_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "func": func,
+            "column": column,
+            "group_by": group_by,
+            "filters": filters,
+            "limit": limit,
+        },
+    )
+
+
+@mcp.tool()
+async def aggregate_table_pg(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    func: str,
+    column: str | None = None,
+    group_by: list[str] | None = None,
+    filters: list[dict] | None = None,
+    limit: int = 50,
+) -> dict:
+    """허용된 한 표에서 count/sum/avg/max/min 을 조립해 원천 Postgres에 직접 실행한다. set_credentials 필요. MindsDB를 거치지 않는다."""
+    return await tools.aggregate_table_pg(
         _runtime(),
         _store(),
         {

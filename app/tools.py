@@ -195,6 +195,52 @@ def _parse_query_args(
     return sql, params, physical_columns, limit
 
 
+def _parse_aggregate_args(
+    table: intersect.AllowedTable,
+    args: dict[str, Any],
+    settings: Settings,
+    *,
+    mindsdb: bool,
+) -> tuple[str, tuple[Any, ...], str, str | None, list[str], int]:
+    func = str(args.get("func") or "").strip().lower()
+    raw_column = args.get("column")
+    column = str(raw_column).strip() if raw_column not in (None, "") else None
+    raw_groups = args.get("group_by")
+    if raw_groups is None:
+        group_names: list[str] = []
+    elif not isinstance(raw_groups, list):
+        raise QueryError("group_by 는 배열이어야 합니다.")
+    else:
+        group_names = [str(item) for item in raw_groups]
+    try:
+        physical_column = None
+        if column:
+            physical_column = intersect.resolve_columns(table, [column])[0]
+        group_by = intersect.resolve_columns(table, group_names) if group_names else []
+        parsed_filters = filters.parse_filters(args.get("filters"))
+        bound_filters = []
+        for item in parsed_filters:
+            col = intersect.resolve_columns(table, [item.column])[0]
+            bound_filters.append(filters.Filter(column=col, op=item.op, value=item.value))
+        limit = sqlutil.clamp_limit(args.get("limit"), 1 if not group_by else 50, settings.row_limit)
+        sql, params = sqlutil.assemble_aggregate(
+            table.schema_name,
+            table.table_name,
+            func,
+            physical_column,
+            group_by,
+            limit,
+            bound_filters,
+            source=table.source_name if mindsdb else None,
+            inline=mindsdb,
+        )
+    except KeyError as exc:
+        raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
+    except IdentError as exc:
+        raise QueryError(str(exc)) from exc
+    return sql, params, func, physical_column, group_by, limit
+
+
 async def list_sources(
     settings: Settings,
     store: CredentialStore,
@@ -258,7 +304,7 @@ async def set_credentials(
         "host": endpoint.host,
         "port": endpoint.port,
         "database": endpoint.database,
-        "note": "id/pw 는 query_table_pg 등 PG 직조회에만 씁니다. MindsDB query_table 에는 필요 없습니다.",
+        "note": "id/pw 는 query_table_pg / aggregate_table_pg 에만 씁니다. MindsDB 조회에는 필요 없습니다.",
     }
 
 
@@ -419,44 +465,9 @@ async def aggregate_table(
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
     table = _table_from_catalog(catalog, source_name, schema_name, table_name)
-    func = str(args.get("func") or "").strip().lower()
-    raw_column = args.get("column")
-    column = str(raw_column).strip() if raw_column not in (None, "") else None
-    raw_groups = args.get("group_by")
-    if raw_groups is None:
-        group_names: list[str] = []
-    elif not isinstance(raw_groups, list):
-        raise QueryError("group_by 는 배열이어야 합니다.")
-    else:
-        group_names = [str(item) for item in raw_groups]
-
-    try:
-        physical_column = None
-        if column:
-            physical_column = intersect.resolve_columns(table, [column])[0]
-        group_by = intersect.resolve_columns(table, group_names) if group_names else []
-        parsed_filters = filters.parse_filters(args.get("filters"))
-        bound_filters = []
-        for item in parsed_filters:
-            col = intersect.resolve_columns(table, [item.column])[0]
-            bound_filters.append(filters.Filter(column=col, op=item.op, value=item.value))
-        limit = sqlutil.clamp_limit(args.get("limit"), 1 if not group_by else 50, settings.row_limit)
-        sql, _params = sqlutil.assemble_aggregate(
-            table.schema_name,
-            table.table_name,
-            func,
-            physical_column,
-            group_by,
-            limit,
-            bound_filters,
-            source=table.source_name,
-            inline=True,
-        )
-    except KeyError as exc:
-        raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
-    except IdentError as exc:
-        raise QueryError(str(exc)) from exc
-
+    sql, _params, func, physical_column, group_by, limit = _parse_aggregate_args(
+        table, args, settings, mindsdb=True
+    )
     rows = await _execute_mindsdb(settings, sql, max_rows=limit)
     log.info(
         "aggregate_table %s.%s func=%s rows=%s",
@@ -468,6 +479,35 @@ async def aggregate_table(
     return {
         **_table_ref(table),
         "via": VIA_MINDSDB,
+        "func": func,
+        "column": physical_column,
+        "group_by": group_by,
+        "items": rows,
+    }
+
+
+async def aggregate_table_pg(
+    settings: Settings,
+    store: CredentialStore,
+    args: dict[str, Any],
+) -> dict:
+    source_name, schema_name, table_name = _require_table_keys(args)
+    catalog = await load_catalog(settings)
+    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    sql, params, func, physical_column, group_by, limit = _parse_aggregate_args(
+        table, args, settings, mindsdb=False
+    )
+    rows = await _execute_pg(settings, store, table, sql, params, max_rows=limit)
+    log.info(
+        "aggregate_table_pg %s.%s func=%s rows=%s",
+        table.schema_name,
+        table.table_name,
+        func,
+        len(rows),
+    )
+    return {
+        **_table_ref(table),
+        "via": VIA_PG,
         "func": func,
         "column": physical_column,
         "group_by": group_by,

@@ -7,7 +7,7 @@
 ## 최근 변경 (2026-09-15)
 
 - **카탈로그 SoT를 stone-meta-api로.** `ROBO_META_URL` 별칭은 유지한다. 표별 `schema_name`을 쓴다. 소스 `source_schema` 한 칸으로 덮지 않는다.
-- **실행 경로 둘.** `query_table` / `aggregate_table` / `get_distinct_values`는 `/query_execute`. `query_table_pg`는 nk-backend 데이터소스 host/port/db로 asyncpg.
+- **실행 경로 둘.** `query_table` / `aggregate_table` / `get_distinct_values`는 `/query_execute`. `query_table_pg` / `aggregate_table_pg`는 nk-backend 데이터소스 host/port/db로 asyncpg. SELECT 집계는 양쪽 다 된다. 쓰기는 없다.
 - **등록.** 다른 PC는 SSH·소스 경로 없이 `http://<MCP호스트>:8111/mcp` + `x-api-key`.
 - **MindsDB 식별자.** `/query_execute`로 가는 컬럼·WHERE는 쌍따옴표가 아니라 백틱. MySQL 방언에서 `"컬럼"`은 문자열이라 COUNT가 0이 되었다.
 - 상세는 [`change_log.md`](change_log.md) 2026-09-15.
@@ -19,7 +19,7 @@
 - HTTP는 Streamable HTTP(`/mcp`) + `X-Api-Key`. 같은 호스트 stdio는 컨테이너 `docker exec`.
 - `query_table`(MindsDB)에는 DB 비밀번호가 필요 없습니다. `query_table_pg`만 계정(id/pw)이 필요합니다. 도구 결과에 비밀번호는 없습니다.
 
-하지 않는 일: 자유 SQL, DML/DDL, dump, 카탈로그에 없는 표 조회.
+하지 않는 일: 자유 SQL 문자열, INSERT/UPDATE/DELETE/DDL, dump, 카탈로그에 없는 표 조회. `count`/`sum`/`avg`/`max`/`min`은 SELECT 집계라 양쪽 경로에 있다.
 
 ## 도구
 
@@ -32,7 +32,8 @@
 | `query_table` | 조립 SELECT를 `/query_execute`(MindsDB)로 실행 |
 | `query_table_pg` | 같은 조립 SELECT를 원천 Postgres에 직접 실행. `set_credentials` 필요 |
 | `aggregate_table` | `count`/`sum`/`avg`/`max`/`min`. `/query_execute` |
-| `set_credentials` | `query_table_pg`용 id/pw. 프로세스 메모리. 결과에 비밀번호 없음 |
+| `aggregate_table_pg` | 같은 집계를 원천 Postgres에 직접 실행. `set_credentials` 필요 |
+| `set_credentials` | PG 직조회용 id/pw. 프로세스 메모리. 결과에 비밀번호 없음 |
 | `clear_credentials` | 넣어 둔 계정 삭제 |
 
 행 상한은 `MCP_ROW_LIMIT`(기본 200). `filters.op`: eq, ne, gt, gte, lt, lte, like, in, is_null, is_not_null.
@@ -41,8 +42,8 @@
 
 | 도구 | 창구 | 비밀번호 |
 | --- | --- | --- |
-| `query_table` 등 | stone-meta `POST /query_execute` → MindsDB | 없음 |
-| `query_table_pg` | nk-backend `GET /air-swmm/data-fabric/api/datasources` 좌표 → asyncpg | `set_credentials` 또는 `MCP_DS_USER_<소스>` / `MCP_DS_PASSWORD_<소스>` |
+| `query_table` / `aggregate_table` 등 | stone-meta `POST /query_execute` → MindsDB | 없음 |
+| `query_table_pg` / `aggregate_table_pg` | nk-backend 데이터소스 좌표 → asyncpg | `set_credentials` 또는 `MCP_DS_USER_<소스>` / `MCP_DS_PASSWORD_<소스>` |
 
 접속 좌표(host/port/database)는 데이터소스 API에서 읽습니다. 카탈로그에 넣지 않습니다. 스키마는 카탈로그 표 단위입니다.
 

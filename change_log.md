@@ -31,3 +31,9 @@ MindsDB를 거치지 않는 조립 SELECT를 둔다. 접속 좌표는 nk-backend
 `aggregate_table`·`query_table`·`get_distinct_values`가 컬럼을 `"suj_name"`처럼 쌍따옴표로 묶어 `/query_execute`에 넘겼다. MindsDB(MySQL 방언)는 이를 식별자가 아니라 문자열로 보아 `WHERE`가 항상 거짓이고 COUNT가 0이었다. 그 경로는 백틱만 쓴다. PG 직조회는 기존 쌍따옴표를 유지한다.
 
 관련: `app/sqlutil.py` · `tests/test_sqlutil_paths.py`
+
+### PG 직조회 집계 `aggregate_table_pg`
+
+`query_table_pg`만 있고 집계가 `/query_execute`에만 있으면 COUNT 등을 PG에서 할 수 없다. SELECT 전용은 INSERT/UPDATE/DDL 금지이지 집계 금지가 아니다. `count`/`sum`/`avg`/`max`/`min`과 `group_by`·`filters`를 원천 Postgres에 직접 실행한다.
+
+관련: `app/tools.py` · `app/main.py` · `tests/test_sqlutil_paths.py`
