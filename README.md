@@ -8,6 +8,7 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 
 ## 최근 변경 (2026-09-16)
 
+- **카탈로그 목록/상세.** `POST /meta/catalog`는 표 이름 페이지(기본 50). 컬럼·FK는 `describe_table`→`/meta/table`, `list_join_hints`→`/meta/ref`. 표 목록은 빈 컬럼이어도 남긴다.
 - **MCP `/health`.** stone `GET /health`만 본다. 30초 Docker healthcheck가 `POST /meta/catalog` 전체를 다시 받지 않는다. 표 목록은 도구 호출 때 읽는다.
 - **이미지 둘.** stone-meta 전용 이미지 + MCP 이미지. 한 프로세스에 합치지 않는다.
 - **한 포트.** nginx가 `/mcp` → MCP, 나머지 → stone-meta. 정본 `:8096`. 기존 등록용 `:8111`도 같은 프록시에 붙일 수 있다.
@@ -19,7 +20,7 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 
 - REST: stone-meta 컨테이너의 계약 경로. 접두어 없음. 프록시 뒤에서 연다.
 - 에이전트: 소스 목록·표 목록·컬럼 상세·고유값·제한 SELECT·집계 도구.
-- 허용 표 = `POST /meta/catalog`에 있는 Postgres 표·컬럼.
+- 허용 표 = `POST /meta/catalog` 이름 목록의 Postgres·Tibero 표. 컬럼은 `POST /meta/table`.
 - MCP HTTP는 Streamable HTTP(`/mcp`) + `X-Api-Key`. REST 계약 경로는 키를 요구하지 않는다.
 - `query_table`(MindsDB)에는 DB 비밀번호가 필요 없습니다. `query_table_pg`만 계정(id/pw)이 필요합니다. 도구 결과에 비밀번호는 없습니다.
 
@@ -37,9 +38,9 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 | 도구 | 역할 |
 | --- | --- |
 | `list_sources` | 카탈로그 소스·스키마와 data-fabric host/port/db. 비밀번호 없음 |
-| `list_tables` | 허용 표 목록. 물리 3키와 논리명·설명. 선택 `schema_name` |
-| `describe_table` | 표 논리명·설명, 컬럼 타입·PK·논리명·코멘트, `references`/`referenced_by` |
-| `list_join_hints` | 카탈로그 FK(`references`)만 모은다. infer-FK·논리 동일 표는 없음 |
+| `list_tables` | 허용 표 이름 목록. 물리 3키와 논리명·설명. 선택 `schema_name`. 컬럼은 없음 |
+| `describe_table` | 표 논리명·설명, 컬럼 타입·PK·논리명·코멘트. `POST /meta/table` |
+| `list_join_hints` | 한 표의 `/meta/ref` FK만. 표 키 필요. infer-FK 없음 |
 | `get_distinct_values` | 허용 컬럼 DISTINCT. `/query_execute`. 별칭 `distinct_value` |
 | `query_table` | 조립 SELECT를 `/query_execute`(MindsDB)로 실행 |
 | `query_table_pg` | 같은 조립 SELECT를 원천 Postgres에 직접 실행. `set_credentials` 필요 |

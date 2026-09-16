@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse, Response
 from . import catalog_client, execute_client, sources_client, tools
 from .auth import key_ok
 from .cli import parse_args
+from .gateway import health_path
 from .runtime import RT
 from .settings import SettingsError, load_settings
 
@@ -74,19 +75,22 @@ async def clear_credentials(source_name: str | None = None) -> dict:
 
 @mcp.tool()
 async def list_tables(schema_name: str | None = None) -> dict:
-    """카탈로그의 Postgres·Tibero 표 목록. schema_name 으로 걸 수 있다."""
+    """카탈로그의 Postgres·Tibero 표 이름 목록. 컬럼은 describe_table. schema_name 으로 걸 수 있다."""
     return await tools.list_tables(_runtime(), schema_name=schema_name)
 
 
 @mcp.tool()
-async def list_join_hints() -> dict:
-    """카탈로그 컬럼의 references·referenced_by 만 모은다. infer-FK 는 만들지 않는다."""
-    return await tools.list_join_hints(_runtime())
+async def list_join_hints(source_name: str, schema_name: str, table_name: str) -> dict:
+    """한 표의 /meta/ref FK만 모은다. infer-FK 는 만들지 않는다. 표 키가 필요하다."""
+    return await tools.list_join_hints(
+        _runtime(),
+        {"source_name": source_name, "schema_name": schema_name, "table_name": table_name},
+    )
 
 
 @mcp.tool()
 async def describe_table(source_name: str, schema_name: str, table_name: str) -> dict:
-    """허용된 표의 논리명·컬럼 타입·PK·코멘트를 준다."""
+    """허용된 표의 논리명·컬럼 타입·PK·코멘트. 컬럼은 POST /meta/table."""
     return await tools.describe_table(
         _runtime(),
         {"source_name": source_name, "schema_name": schema_name, "table_name": table_name},
@@ -352,7 +356,7 @@ async def health(_request: Request) -> Response:
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path == "/health":
+        if health_path(request.url.path):
             return await call_next(request)
         provided = (request.headers.get("x-api-key") or "").strip()
         authorization = request.headers.get("authorization") or ""

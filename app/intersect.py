@@ -72,8 +72,6 @@ def catalog_tables(
                 for col in (table.get("columns") or [])
                 if isinstance(col, dict) and col.get("column_name")
             ]
-            if not catalog_cols:
-                continue
             allowed.append(
                 AllowedTable(
                     source_name=source_name,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any
 
 from . import assemble, catalog_client, execute_client, filters, intersect, pg_runner, sources_client, sqlutil, tibero_runner
@@ -107,6 +108,49 @@ def _table_from_catalog(
     if table is None:
         raise QueryError("허용된 표가 아닙니다. 카탈로그에 있는 한 소스의 한 스키마만 조회합니다.")
     return table
+
+
+def _columns_from_table_meta(detail: dict) -> tuple[str, ...]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for col in detail.get("columns") or []:
+        if not isinstance(col, dict):
+            continue
+        name = str(col.get("column_name") or "").strip()
+        if not name or name.lower() in seen:
+            continue
+        seen.add(name.lower())
+        names.append(name)
+    return tuple(names)
+
+
+async def _table_with_columns(
+    settings: Settings,
+    catalog: dict,
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    *,
+    engines: set[str] | None = None,
+) -> intersect.AllowedTable:
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines=engines
+    )
+    if table.columns:
+        return table
+    try:
+        detail = await catalog_client.fetch_table(
+            settings.stone_meta_url,
+            source_name=table.source_name,
+            schema_name=table.schema_name,
+            table_name=table.table_name,
+        )
+    except catalog_client.CatalogError as exc:
+        raise QueryError(f"표 상세를 읽지 못했습니다. stone-meta-api POST /meta/table. {exc}") from exc
+    cols = _columns_from_table_meta(detail)
+    if not cols:
+        raise QueryError("허용된 컬럼이 없습니다. /meta/table 에 컬럼이 없습니다.")
+    return replace(table, columns=cols)
 
 
 def _match_endpoint(
@@ -382,7 +426,6 @@ async def list_tables(
         {
             **_table_ref(item),
             **_table_labels(item),
-            "columns": list(item.columns),
         }
         for item in allowed
         if not schema_key or item.schema_name.lower() == schema_key
@@ -399,31 +442,48 @@ async def describe_table(
     table = _table_from_catalog(
         catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
     )
-    catalog_table = intersect.find_catalog_table(
-        catalog, table.source_name, table.schema_name, table.table_name
-    )
-    raw_cols = (catalog_table or {}).get("columns") or []
+    try:
+        detail = await catalog_client.fetch_table(
+            settings.stone_meta_url,
+            source_name=table.source_name,
+            schema_name=table.schema_name,
+            table_name=table.table_name,
+        )
+    except catalog_client.CatalogError as exc:
+        raise QueryError(f"표 상세를 읽지 못했습니다. stone-meta-api POST /meta/table. {exc}") from exc
+    info = detail.get("table_info") if isinstance(detail.get("table_info"), dict) else {}
+    fk_by_col: dict[str, dict] = {}
+    for fk in detail.get("fk") or []:
+        if not isinstance(fk, dict) or not fk.get("column_name"):
+            continue
+        fk_by_col[str(fk["column_name"]).lower()] = {
+            "schema_name": fk.get("ref_schema_name"),
+            "table_name": fk.get("ref_table_name"),
+            "column_name": fk.get("ref_column_name"),
+            "position": fk.get("position") or 1,
+        }
     columns: list[dict] = []
-    for col in raw_cols:
+    for col in detail.get("columns") or []:
         if not isinstance(col, dict) or not col.get("column_name"):
             continue
         name = str(col["column_name"])
+        constraints = col.get("constraints") or []
         columns.append(
             {
                 "column_name": name,
                 "data_type": col.get("data_type"),
-                "nullable": col.get("nullable"),
-                "primary_key": bool(col.get("primary_key")),
-                "logical_name": intersect.catalog_column_logical_name(col) or None,
-                "comment": col.get("comment") or col.get("description"),
-                "references": col.get("references"),
-                "referenced_by": col.get("referenced_by"),
+                "nullable": col.get("is_null") if "is_null" in col else col.get("nullable"),
+                "primary_key": "PK" in constraints or bool(col.get("primary_key")),
+                "logical_name": col.get("column_name_kr") or intersect.catalog_column_logical_name(col) or None,
+                "comment": col.get("column_comment") or col.get("comment") or col.get("description"),
+                "references": fk_by_col.get(name.lower()),
+                "referenced_by": None,
             }
         )
     return {
         **_table_ref(table),
-        "logical_name": table.logical_name or None,
-        "description": table.description or None,
+        "logical_name": table.logical_name or info.get("table_name_kr") or None,
+        "description": table.description or info.get("description") or None,
         "columns": columns,
     }
 
@@ -435,8 +495,8 @@ async def get_distinct_values(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
     )
     column = str(args.get("column_name") or args.get("column") or "").strip()
     if not column:
@@ -483,8 +543,8 @@ async def query_table(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
     )
     sql, _params, physical_columns, limit = _parse_query_args(
         table, args, settings, mindsdb=True
@@ -506,8 +566,8 @@ async def query_table_pg(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={POSTGRES}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES}
     )
     sql, params, physical_columns, limit = _parse_query_args(
         table, args, settings, mindsdb=False
@@ -529,8 +589,8 @@ async def query_table_tibero(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={TIBERO}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={TIBERO}
     )
     sql, params, physical_columns, limit = _parse_query_args(
         table, args, settings, mindsdb=False, dialect="tibero"
@@ -552,8 +612,8 @@ async def aggregate_table(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
     )
     sql, _params, func, physical_column, group_by, limit = _parse_aggregate_args(
         table, args, settings, mindsdb=True
@@ -583,8 +643,8 @@ async def aggregate_table_pg(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={POSTGRES}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES}
     )
     sql, params, func, physical_column, group_by, limit = _parse_aggregate_args(
         table, args, settings, mindsdb=False
@@ -614,8 +674,8 @@ async def aggregate_table_tibero(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(
-        catalog, source_name, schema_name, table_name, engines={TIBERO}
+    table = await _table_with_columns(
+        settings, catalog, source_name, schema_name, table_name, engines={TIBERO}
     )
     sql, params, func, physical_column, group_by, limit = _parse_aggregate_args(
         table, args, settings, mindsdb=False, dialect="tibero"
@@ -745,15 +805,51 @@ def catalog_fk_hints(catalog: dict) -> list[dict[str, Any]]:
     return items
 
 
-async def list_join_hints(settings: Settings) -> dict:
+async def list_join_hints(settings: Settings, args: dict[str, Any]) -> dict:
+    source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    items = catalog_fk_hints(catalog)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    )
+    try:
+        refs = await catalog_client.fetch_refs(
+            settings.stone_meta_url,
+            source_name=table.source_name,
+            schema_name=table.schema_name,
+            table_name=table.table_name,
+        )
+    except catalog_client.CatalogError as exc:
+        raise QueryError(f"FK를 읽지 못했습니다. stone-meta-api POST /meta/ref. {exc}") from exc
+    items: list[dict[str, Any]] = []
+    for fk in refs:
+        if not isinstance(fk, dict) or not fk.get("column_name"):
+            continue
+        to_schema = str(fk.get("ref_schema_name") or "")
+        to_table = str(fk.get("ref_table_name") or "")
+        items.append(
+            {
+                "from": {
+                    "source_name": table.source_name,
+                    "schema_name": table.schema_name,
+                    "table_name": table.table_name,
+                    "column_name": str(fk.get("column_name") or ""),
+                },
+                "to": {
+                    "source_name": _lookup_source(catalog, to_schema, to_table),
+                    "schema_name": to_schema,
+                    "table_name": to_table,
+                    "column_name": str(fk.get("ref_column_name") or ""),
+                },
+                "position": fk.get("position") or 1,
+                "via": "meta-ref",
+            }
+        )
     return {
         "total": len(items),
         "items": items,
         "note": (
-            "/meta/catalog 컬럼의 references·referenced_by 만 모았습니다. "
-            "infer-FK·논리 동일 표 후보는 카탈로그에 없습니다."
+            "한 표의 /meta/ref 만 모았습니다. infer-FK·논리 동일 표 후보는 없습니다. "
+            "전 표 힌트는 494회 호출이 되므로 표 키를 받습니다."
         ),
     }
 

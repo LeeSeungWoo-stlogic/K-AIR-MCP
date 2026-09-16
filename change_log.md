@@ -4,6 +4,12 @@ K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내�
 
 ## 2026-09-16
 
+### 카탈로그 목록과 상세를 나눈다
+
+`POST /meta/catalog`는 소스·표 이름만 페이지로 받는다(`limit` 기본 50, `cursor`). 컬럼·FK는 요청 경로에서 접지 않는다. `list_tables`는 이름 목록이다. `describe_table`은 `POST /meta/table`, `list_join_hints`는 표 키를 받아 `POST /meta/ref` 한 번만 친다. 전 표 N+1은 하지 않는다. 빈 `columns` 표도 목록에 남긴다. 조회 도구는 `/meta/table`로 컬럼을 채운 뒤 `/query_execute`를 친다.
+
+관련: `app/catalog_client.py` · `app/intersect.py` · `app/tools.py` · `app/main.py` · `tests/test_catalog_paging.py` · `tests/test_describe_table_meta.py`
+
 ### MCP `/health`는 카탈로그 전체를 읽지 않는다
 
 Docker healthcheck가 30초마다 MCP `GET /health`를 치고, 그 핸들러가 `POST /meta/catalog` 전체를 다시 받았다. stone-meta 워커가 하나라 그 조회가 안 끝나면 `/health`·`/data_decision`까지 멈췄다. `probe_catalog`는 stone `GET /health`만 본다. 표 목록은 도구가 부를 때만 `POST /meta/catalog`를 쓴다.
