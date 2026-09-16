@@ -30,9 +30,11 @@ mcp = FastMCP(
         "표 목록은 stone-meta-api POST /meta/catalog. "
         "query_table / aggregate_table / get_distinct_values 는 stone-meta POST /query_execute (MindsDB). "
         "query_table_pg / aggregate_table_pg 는 nk-backend 데이터소스 좌표로 원천 Postgres에 직접 실행. "
-        "PG 직조회 전에 set_credentials 가 필요하다. "
+        "query_table_tibero / aggregate_table_tibero 는 같은 좌표로 원천 Tibero에 JDBC 직조회. "
+        "직조회 전에 set_credentials 가 필요하다. "
         "쓰기는 없고, SELECT 집계(count/sum/avg/max/min)는 된다. "
-        "SQL 문자열은 받지 않으며, 허용된 한 표만 조회한다. "
+        "SQL 문자열은 받지 않는다. 한 표 조회는 기존 도구를 쓴다. "
+        "여러 표 결과는 join_tables 가 MCP에서 붙인다. MindsDB 조인을 대신하지 않는다. "
         "같은 소스라도 스키마가 다르면 표별로 schema_name 을 쓴다."
     ),
     host=os.environ.get("API_HOST", "0.0.0.0"),
@@ -60,7 +62,7 @@ async def list_sources() -> dict:
 
 @mcp.tool()
 async def set_credentials(source_name: str, user: str, password: str) -> dict:
-    """query_table_pg / aggregate_table_pg 용 원천 Postgres 계정. 재시작 후에도 쓰려면 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
+    """직조회(PG/Tibero) 계정. 재시작 후에도 쓰려면 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
     return await tools.set_credentials(_runtime(), _store(), source_name, user, password)
 
 
@@ -72,8 +74,14 @@ async def clear_credentials(source_name: str | None = None) -> dict:
 
 @mcp.tool()
 async def list_tables(schema_name: str | None = None) -> dict:
-    """카탈로그의 Postgres 표 목록. schema_name 으로 걸 수 있다."""
+    """카탈로그의 Postgres·Tibero 표 목록. schema_name 으로 걸 수 있다."""
     return await tools.list_tables(_runtime(), schema_name=schema_name)
+
+
+@mcp.tool()
+async def list_join_hints() -> dict:
+    """카탈로그 컬럼의 references·referenced_by 만 모은다. infer-FK 는 만들지 않는다."""
+    return await tools.list_join_hints(_runtime())
 
 
 @mcp.tool()
@@ -160,6 +168,32 @@ async def query_table_pg(
 
 
 @mcp.tool()
+async def query_table_tibero(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    columns: list[str] | None = None,
+    filters: list[dict] | None = None,
+    order_by: list[dict] | None = None,
+    limit: int = 50,
+) -> dict:
+    """허용된 Tibero 한 표에서 조립한 SELECT를 JDBC로 직접 실행한다. set_credentials 필요. INSERT/UPDATE/DDL 없음."""
+    return await tools.query_table_tibero(
+        _runtime(),
+        _store(),
+        {
+            "source_name": source_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "columns": columns,
+            "filters": filters,
+            "order_by": order_by,
+            "limit": limit,
+        },
+    )
+
+
+@mcp.tool()
 async def aggregate_table(
     source_name: str,
     schema_name: str,
@@ -211,6 +245,80 @@ async def aggregate_table_pg(
             "group_by": group_by,
             "filters": filters,
             "limit": limit,
+        },
+    )
+
+
+@mcp.tool()
+async def aggregate_table_tibero(
+    source_name: str,
+    schema_name: str,
+    table_name: str,
+    func: str,
+    column: str | None = None,
+    group_by: list[str] | None = None,
+    filters: list[dict] | None = None,
+    limit: int = 50,
+) -> dict:
+    """허용된 Tibero 한 표에서 count/sum/avg/max/min 을 조립해 JDBC로 직접 실행한다. set_credentials 필요."""
+    return await tools.aggregate_table_tibero(
+        _runtime(),
+        _store(),
+        {
+            "source_name": source_name,
+            "schema_name": schema_name,
+            "table_name": table_name,
+            "func": func,
+            "column": column,
+            "group_by": group_by,
+            "filters": filters,
+            "limit": limit,
+        },
+    )
+
+
+@mcp.tool()
+async def join_tables(
+    left_source_name: str,
+    left_schema_name: str,
+    left_table_name: str,
+    left_on: str | list[str],
+    right_source_name: str,
+    right_schema_name: str,
+    right_table_name: str,
+    right_on: str | list[str],
+    left_via: str = "mindsdb",
+    right_via: str = "mindsdb",
+    left_columns: list[str] | None = None,
+    right_columns: list[str] | None = None,
+    left_filters: list[dict] | None = None,
+    right_filters: list[dict] | None = None,
+    left_limit: int = 50,
+    right_limit: int = 50,
+    how: str = "inner",
+) -> dict:
+    """두 표를 각 경로로 조회한 뒤 MCP에서 붙인다. 엔진에 JOIN SQL을 보내지 않는다. via는 mindsdb, pg, tibero."""
+    return await tools.join_tables(
+        _runtime(),
+        _store(),
+        {
+            "left_source_name": left_source_name,
+            "left_schema_name": left_schema_name,
+            "left_table_name": left_table_name,
+            "left_on": left_on,
+            "left_via": left_via,
+            "left_columns": left_columns,
+            "left_filters": left_filters,
+            "left_limit": left_limit,
+            "right_source_name": right_source_name,
+            "right_schema_name": right_schema_name,
+            "right_table_name": right_table_name,
+            "right_on": right_on,
+            "right_via": right_via,
+            "right_columns": right_columns,
+            "right_filters": right_filters,
+            "right_limit": right_limit,
+            "how": how,
         },
     )
 

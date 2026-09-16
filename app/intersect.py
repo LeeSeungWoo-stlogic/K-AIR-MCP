@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .engine import is_postgres
+from .engine import POSTGRES, normalize_engine
 
 
 def _slot_text(*values: object) -> str:
@@ -36,20 +36,30 @@ class AllowedTable:
     description: str = ""
 
 
-def catalog_tables(catalog: dict, *, postgres_only: bool = True) -> list[AllowedTable]:
+def catalog_tables(
+    catalog: dict,
+    *,
+    postgres_only: bool = True,
+    engines: set[str] | None = None,
+) -> list[AllowedTable]:
     sources = catalog.get("sources") if isinstance(catalog, dict) else None
     if not sources:
         return []
+    wanted = engines
+    if wanted is None and postgres_only:
+        wanted = {POSTGRES}
 
     allowed: list[AllowedTable] = []
     for source in sources:
         if not isinstance(source, dict):
             continue
-        if postgres_only and not is_postgres(source.get("engine")):
+        engine = normalize_engine(source.get("engine"))
+        if engine is None:
+            continue
+        if wanted is not None and engine not in wanted:
             continue
         source_name = str(source.get("source_name") or "")
         source_schema = str(source.get("source_schema") or "")
-        engine = "postgres"
         for table in source.get("tables") or []:
             if not isinstance(table, dict):
                 continue

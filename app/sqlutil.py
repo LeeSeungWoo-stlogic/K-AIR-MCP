@@ -85,6 +85,14 @@ def _to_asyncpg(sql: str) -> str:
     return "".join(parts)
 
 
+def _finish_sql(sql: str, params: list[Any], *, dialect: str, limit: int) -> tuple[str, tuple[Any, ...]]:
+    if dialect == "tibero":
+        wrapped = f"SELECT * FROM ({sql}) q WHERE ROWNUM <= {int(limit)}"
+        return wrapped.replace("%s", "?"), tuple(params)
+    sql += f" LIMIT {int(limit)}"
+    return _to_asyncpg(sql), tuple(params)
+
+
 def assemble_select_bound(
     schema: str,
     table: str,
@@ -95,6 +103,7 @@ def assemble_select_bound(
     *,
     source: str | None = None,
     inline: bool = False,
+    dialect: str = "postgres",
 ) -> tuple[str, tuple[Any, ...]]:
     if not columns:
         raise IdentError("columns are required")
@@ -113,8 +122,7 @@ def assemble_select_bound(
             for item in order_by
         ]
         sql += " ORDER BY " + ", ".join(parts)
-    sql += f" LIMIT {int(limit)}"
-    return _to_asyncpg(sql), tuple(params)
+    return _finish_sql(sql, params, dialect=dialect, limit=limit)
 
 
 def assemble_distinct(
@@ -140,6 +148,7 @@ def assemble_aggregate(
     *,
     source: str | None = None,
     inline: bool = False,
+    dialect: str = "postgres",
 ) -> tuple[str, tuple[Any, ...]]:
     name = (func or "").strip().lower()
     if name not in AGG_FUNCS:
@@ -164,5 +173,4 @@ def assemble_aggregate(
         sql += " WHERE " + " AND ".join(clauses)
     if groups:
         sql += " GROUP BY " + ", ".join(groups)
-    sql += f" LIMIT {int(limit)}"
-    return _to_asyncpg(sql), tuple(params)
+    return _finish_sql(sql, params, dialect=dialect, limit=limit)

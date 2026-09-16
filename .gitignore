@@ -2,8 +2,9 @@
 .env.*
 !.env.example
 
-# vendor Tibero JDBC (라이선스 파일, Git 제외)
-driver/*.jar
+# 라이선스 JAR. 이미지 빌드에는 넣는다. Git에는 올리지 않는다.
+driver/tibero-jdbc.jar
+*.jar
 
 __pycache__/
 *.py[cod]

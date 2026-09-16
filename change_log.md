@@ -10,6 +10,26 @@ Docker healthcheck가 30초마다 MCP `GET /health`를 치고, 그 핸들러가 
 
 관련: `app/catalog_client.py` · `tests/test_health_probe.py`
 
+### Tibero JDBC 직조회
+
+`query_table_tibero` / `aggregate_table_tibero`를 둔다. 좌표는 nk-backend 데이터소스, 계정은 `set_credentials`. `driver/tibero-jdbc.jar`는 이미지 빌드에 넣는다. Git에는 올리지 않는다. 없으면 빌드가 실패한다. 조인 후보 메타는 카탈로그에 없어 힌트 경로에 넣지 않았다. `join_tables`의 `via=tibero`는 호출자가 준 키로 붙인다.
+
+관련: `app/tibero_runner.py` · `app/sqlutil.py` · `app/tools.py` · `app/main.py` · `tests/test_tibero_direct.py`
+
+### MCP에서 조회 결과 재조립
+
+MindsDB 경유 도구는 그대로 둔다. `join_tables`가 두 표를 `query_table` 또는 `query_table_pg`로 가져온 뒤 프로세스 안에서 붙인다. 엔진에 JOIN SQL을 보내지 않는다. 조인 키는 호출자가 준다.
+
+`/meta/catalog`는 `join_candidates`/`join_groups`/infer-FK를 내지 않는다. 컬럼 `references`·`referenced_by`만 있고, `list_join_hints`와 `describe_table`이 그 칸을 보여 준다.
+
+관련: `app/assemble.py` · `app/tools.py` · `app/main.py` · `tests/test_assemble_join.py`
+
+### stone-meta 전용 이미지와 프록시 한 포트
+
+stone-meta는 `newkair-backend`를 베이스로 쓰지 않는 `deploy/stone-meta/Dockerfile`(`K-AIR-Stone`)로 띄운다. MCP는 이 저장소 이미지(`kair-mcp-analyze:dev`)로 따로 띄운다. 호스트 한 포트는 nginx가 `/mcp`만 MCP에, 나머지는 stone-meta에 넘긴다. 프로세스를 하나로 합치지 않는다.
+
+관련: `Dockerfile` · `docker-compose.yml` · `K-AIR-Stone/deploy/stone-meta/`
+
 ## 2026-09-15
 
 ### stone-meta-api 카탈로그·실행 동기화

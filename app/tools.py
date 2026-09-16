@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from . import catalog_client, execute_client, filters, intersect, pg_runner, sources_client, sqlutil
+from . import assemble, catalog_client, execute_client, filters, intersect, pg_runner, sources_client, sqlutil, tibero_runner
+from .engine import POSTGRES, TIBERO
 from .credentials import CredentialStore
 from .errors import IdentError
 from .settings import Settings
@@ -19,9 +20,20 @@ class QueryError(ValueError):
 CATALOG_UNREACHABLE = "카탈로그를 읽지 못했습니다. stone-meta-api POST /meta/catalog 에 연결할 수 없습니다."
 EXECUTE_UNREACHABLE = "조회를 실행하지 못했습니다. stone-meta-api POST /query_execute 에 연결할 수 없습니다."
 SOURCES_UNREACHABLE = "데이터소스 목록을 읽지 못했습니다. nk-backend GET /air-swmm/data-fabric/api/datasources 에 연결할 수 없습니다."
-NEED_CREDENTIALS = "이 소스에 대한 id/pw가 없습니다. set_credentials로 먼저 입력하세요. PG 직조회에만 필요합니다."
+NEED_CREDENTIALS = "이 소스에 대한 id/pw가 없습니다. set_credentials로 먼저 입력하세요. PG/Tibero 직조회에만 필요합니다."
 VIA_MINDSDB = "mindsdb-query_execute"
 VIA_PG = "postgres-direct"
+VIA_TIBERO = "tibero-direct"
+VIA_ASSEMBLE = "mcp-assemble"
+VIA_ALIASES = {
+    "mindsdb": VIA_MINDSDB,
+    "mindsdb-query_execute": VIA_MINDSDB,
+    "pg": VIA_PG,
+    "postgres": VIA_PG,
+    "postgres-direct": VIA_PG,
+    "tibero": VIA_TIBERO,
+    "tibero-direct": VIA_TIBERO,
+}
 
 
 def _row_distinct_value(row: dict[str, Any], physical_column: str) -> Any:
@@ -59,7 +71,7 @@ async def load_catalog(settings: Settings) -> dict:
 
 async def load_endpoints(settings: Settings) -> list[SourceEndpoint]:
     try:
-        return await sources_client.fetch_postgres_endpoints(
+        return await sources_client.fetch_direct_endpoints(
             settings.nk_backend_url,
             settings.nk_backend_token,
         )
@@ -81,13 +93,19 @@ def _table_from_catalog(
     source_name: str,
     schema_name: str,
     table_name: str,
+    *,
+    engines: set[str] | None = None,
 ) -> intersect.AllowedTable:
-    allowed = intersect.catalog_tables(catalog, postgres_only=True)
+    allowed = intersect.catalog_tables(
+        catalog,
+        postgres_only=engines is None,
+        engines=engines,
+    )
     if not allowed:
-        raise QueryError("조회 가능한 Postgres 표가 없습니다. 카탈로그가 비었거나 표가 없습니다.")
+        raise QueryError("조회 가능한 표가 없습니다. 카탈로그가 비었거나 허용 엔진 표가 없습니다.")
     table = intersect.find_table(allowed, source_name, schema_name, table_name)
     if table is None:
-        raise QueryError("허용된 표가 아닙니다. Postgres 카탈로그에 있는 한 소스의 한 스키마만 조회합니다.")
+        raise QueryError("허용된 표가 아닙니다. 카탈로그에 있는 한 소스의 한 스키마만 조회합니다.")
     return table
 
 
@@ -98,7 +116,11 @@ def _match_endpoint(
     endpoint = sources_client.find_endpoint(endpoints, table.source_name)
     if endpoint is None:
         raise QueryError(
-            f"nk-backend 데이터소스에 Postgres 소스 '{table.source_name}' 이 없습니다."
+            f"nk-backend 데이터소스에 소스 '{table.source_name}' 이 없습니다."
+        )
+    if table.engine and endpoint.engine != table.engine:
+        raise QueryError(
+            f"소스 '{table.source_name}' 엔진이 {endpoint.engine} 입니다. {table.engine} 경로와 맞지 않습니다."
         )
     if not endpoint.enabled:
         raise QueryError(f"소스 '{table.source_name}' 이 비활성입니다.")
@@ -151,12 +173,41 @@ async def _execute_pg(
         raise QueryError(str(exc)) from exc
 
 
+async def _execute_tibero(
+    settings: Settings,
+    store: CredentialStore,
+    table: intersect.AllowedTable,
+    sql: str,
+    params: tuple[Any, ...] = (),
+    *,
+    max_rows: int,
+) -> list[dict]:
+    endpoints = await load_endpoints(settings)
+    endpoint = _match_endpoint(endpoints, table)
+    login = store.get(table.source_name)
+    if login is None:
+        raise QueryError(NEED_CREDENTIALS)
+    try:
+        return await tibero_runner.fetch_all(
+            endpoint,
+            user=login.user,
+            password=login.password,
+            sql=sql,
+            params=params,
+            max_rows=max_rows,
+            jar_path=settings.tibero_jdbc_jar or None,
+        )
+    except tibero_runner.QueryRunError as exc:
+        raise QueryError(str(exc)) from exc
+
+
 def _parse_query_args(
     table: intersect.AllowedTable,
     args: dict[str, Any],
     settings: Settings,
     *,
     mindsdb: bool,
+    dialect: str = "postgres",
 ) -> tuple[str, tuple[Any, ...], list[str], int]:
     requested = args.get("columns")
     if requested is None:
@@ -187,6 +238,7 @@ def _parse_query_args(
             limit,
             source=table.source_name if mindsdb else None,
             inline=mindsdb,
+            dialect=dialect,
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
@@ -201,6 +253,7 @@ def _parse_aggregate_args(
     settings: Settings,
     *,
     mindsdb: bool,
+    dialect: str = "postgres",
 ) -> tuple[str, tuple[Any, ...], str, str | None, list[str], int]:
     func = str(args.get("func") or "").strip().lower()
     raw_column = args.get("column")
@@ -233,6 +286,7 @@ def _parse_aggregate_args(
             bound_filters,
             source=table.source_name if mindsdb else None,
             inline=mindsdb,
+            dialect=dialect,
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
@@ -246,7 +300,7 @@ async def list_sources(
     store: CredentialStore,
 ) -> dict:
     catalog = await load_catalog(settings)
-    allowed = intersect.catalog_tables(catalog, postgres_only=True)
+    allowed = intersect.catalog_tables(catalog, postgres_only=False, engines={POSTGRES, TIBERO})
     endpoints: list[SourceEndpoint] = []
     sources_error = None
     try:
@@ -263,7 +317,7 @@ async def list_sources(
         endpoint = by_name.get(item.source_name.lower())
         seen[key] = {
             "source_name": item.source_name,
-            "engine": "postgres",
+            "engine": item.engine,
             "schema_name": item.schema_name,
             "table_count": 1,
             "host": endpoint.host if endpoint else None,
@@ -293,18 +347,19 @@ async def set_credentials(
     endpoints = await load_endpoints(settings)
     endpoint = sources_client.find_endpoint(endpoints, name)
     if endpoint is None:
-        raise QueryError(f"nk-backend 데이터소스에 Postgres 소스 '{name}' 이 없습니다.")
+        raise QueryError(f"nk-backend 데이터소스에 소스 '{name}' 이 없습니다.")
     if not endpoint.enabled:
         raise QueryError(f"소스 '{name}' 이 비활성입니다.")
     store.set(name, login_user, password)
     return {
         "source_name": endpoint.source_name,
+        "engine": endpoint.engine,
         "user": login_user,
         "configured": True,
         "host": endpoint.host,
         "port": endpoint.port,
         "database": endpoint.database,
-        "note": "id/pw 는 query_table_pg / aggregate_table_pg 에만 씁니다. MindsDB 조회에는 필요 없습니다.",
+        "note": "id/pw 는 query_table_pg / query_table_tibero / 집계 직조회에만 씁니다. MindsDB 조회에는 필요 없습니다.",
     }
 
 
@@ -321,7 +376,7 @@ async def list_tables(
     schema_name: str | None = None,
 ) -> dict:
     catalog = await load_catalog(settings)
-    allowed = intersect.catalog_tables(catalog, postgres_only=True)
+    allowed = intersect.catalog_tables(catalog, postgres_only=False, engines={POSTGRES, TIBERO})
     schema_key = (schema_name or "").strip().lower()
     items = [
         {
@@ -341,7 +396,9 @@ async def describe_table(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    )
     catalog_table = intersect.find_catalog_table(
         catalog, table.source_name, table.schema_name, table.table_name
     )
@@ -359,6 +416,8 @@ async def describe_table(
                 "primary_key": bool(col.get("primary_key")),
                 "logical_name": intersect.catalog_column_logical_name(col) or None,
                 "comment": col.get("comment") or col.get("description"),
+                "references": col.get("references"),
+                "referenced_by": col.get("referenced_by"),
             }
         )
     return {
@@ -376,7 +435,9 @@ async def get_distinct_values(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    )
     column = str(args.get("column_name") or args.get("column") or "").strip()
     if not column:
         raise QueryError("column_name 이 필요합니다.")
@@ -422,7 +483,9 @@ async def query_table(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    )
     sql, _params, physical_columns, limit = _parse_query_args(
         table, args, settings, mindsdb=True
     )
@@ -443,7 +506,9 @@ async def query_table_pg(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES}
+    )
     sql, params, physical_columns, limit = _parse_query_args(
         table, args, settings, mindsdb=False
     )
@@ -457,6 +522,29 @@ async def query_table_pg(
     }
 
 
+async def query_table_tibero(
+    settings: Settings,
+    store: CredentialStore,
+    args: dict[str, Any],
+) -> dict:
+    source_name, schema_name, table_name = _require_table_keys(args)
+    catalog = await load_catalog(settings)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={TIBERO}
+    )
+    sql, params, physical_columns, limit = _parse_query_args(
+        table, args, settings, mindsdb=False, dialect="tibero"
+    )
+    rows = await _execute_tibero(settings, store, table, sql, params, max_rows=limit)
+    log.info("query_table_tibero %s.%s rows=%s", table.schema_name, table.table_name, len(rows))
+    return {
+        **_table_ref(table),
+        "via": VIA_TIBERO,
+        "columns": physical_columns,
+        "items": rows,
+    }
+
+
 async def aggregate_table(
     settings: Settings,
     store: CredentialStore,
@@ -464,7 +552,9 @@ async def aggregate_table(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES, TIBERO}
+    )
     sql, _params, func, physical_column, group_by, limit = _parse_aggregate_args(
         table, args, settings, mindsdb=True
     )
@@ -493,7 +583,9 @@ async def aggregate_table_pg(
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
-    table = _table_from_catalog(catalog, source_name, schema_name, table_name)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={POSTGRES}
+    )
     sql, params, func, physical_column, group_by, limit = _parse_aggregate_args(
         table, args, settings, mindsdb=False
     )
@@ -512,4 +604,212 @@ async def aggregate_table_pg(
         "column": physical_column,
         "group_by": group_by,
         "items": rows,
+    }
+
+
+async def aggregate_table_tibero(
+    settings: Settings,
+    store: CredentialStore,
+    args: dict[str, Any],
+) -> dict:
+    source_name, schema_name, table_name = _require_table_keys(args)
+    catalog = await load_catalog(settings)
+    table = _table_from_catalog(
+        catalog, source_name, schema_name, table_name, engines={TIBERO}
+    )
+    sql, params, func, physical_column, group_by, limit = _parse_aggregate_args(
+        table, args, settings, mindsdb=False, dialect="tibero"
+    )
+    rows = await _execute_tibero(settings, store, table, sql, params, max_rows=limit)
+    log.info(
+        "aggregate_table_tibero %s.%s func=%s rows=%s",
+        table.schema_name,
+        table.table_name,
+        func,
+        len(rows),
+    )
+    return {
+        **_table_ref(table),
+        "via": VIA_TIBERO,
+        "func": func,
+        "column": physical_column,
+        "group_by": group_by,
+        "items": rows,
+    }
+
+
+async def _query_via(
+    settings: Settings,
+    store: CredentialStore,
+    via: str,
+    args: dict[str, Any],
+) -> dict:
+    if via == VIA_PG:
+        return await query_table_pg(settings, store, args)
+    if via == VIA_TIBERO:
+        return await query_table_tibero(settings, store, args)
+    return await query_table(settings, store, args)
+
+
+def _parse_via(raw: Any) -> str:
+    key = str(raw or "mindsdb").strip().lower()
+    via = VIA_ALIASES.get(key)
+    if via is None:
+        raise QueryError("via 는 mindsdb, pg, tibero 만 됩니다.")
+    return via
+
+
+def _side_args(prefix: str, args: dict[str, Any], on: list[str]) -> dict[str, Any]:
+    columns = args.get(f"{prefix}_columns")
+    if columns is None:
+        merged = None
+    elif not isinstance(columns, list):
+        raise QueryError(f"{prefix}_columns 는 배열이어야 합니다.")
+    else:
+        merged = [str(col) for col in columns]
+        for key in on:
+            if key not in merged:
+                merged.append(key)
+    return {
+        "source_name": args.get(f"{prefix}_source_name"),
+        "schema_name": args.get(f"{prefix}_schema_name"),
+        "table_name": args.get(f"{prefix}_table_name"),
+        "columns": merged,
+        "filters": args.get(f"{prefix}_filters"),
+        "order_by": args.get(f"{prefix}_order_by"),
+        "limit": args.get(f"{prefix}_limit"),
+    }
+
+
+def _lookup_source(
+    catalog: dict,
+    schema_name: str,
+    table_name: str,
+) -> str | None:
+    matches: list[str] = []
+    for source in catalog.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        source_name = str(source.get("source_name") or "")
+        source_schema = str(source.get("source_schema") or "")
+        for table in source.get("tables") or []:
+            if not isinstance(table, dict):
+                continue
+            schema = str(table.get("schema_name") or source_schema or "")
+            name = str(table.get("table_name") or "")
+            if schema.lower() == schema_name.lower() and name.lower() == table_name.lower():
+                if source_name and source_name not in matches:
+                    matches.append(source_name)
+    return matches[0] if len(matches) == 1 else None
+
+
+def catalog_fk_hints(catalog: dict) -> list[dict[str, Any]]:
+    """카탈로그 컬럼의 references / referenced_by 만 모은다. infer-FK 를 만들지 않는다."""
+    items: list[dict[str, Any]] = []
+    for source in catalog.get("sources") or []:
+        if not isinstance(source, dict):
+            continue
+        source_name = str(source.get("source_name") or "")
+        source_schema = str(source.get("source_schema") or "")
+        for table in source.get("tables") or []:
+            if not isinstance(table, dict):
+                continue
+            schema_name = str(table.get("schema_name") or source_schema or "")
+            table_name = str(table.get("table_name") or "")
+            for col in table.get("columns") or []:
+                if not isinstance(col, dict):
+                    continue
+                column_name = str(col.get("column_name") or "")
+                ref = col.get("references")
+                if isinstance(ref, dict) and ref.get("table_name") and ref.get("column_name"):
+                    to_schema = str(ref.get("schema_name") or "")
+                    to_table = str(ref.get("table_name") or "")
+                    items.append(
+                        {
+                            "from": {
+                                "source_name": source_name,
+                                "schema_name": schema_name,
+                                "table_name": table_name,
+                                "column_name": column_name,
+                            },
+                            "to": {
+                                "source_name": _lookup_source(catalog, to_schema, to_table),
+                                "schema_name": to_schema,
+                                "table_name": to_table,
+                                "column_name": str(ref.get("column_name") or ""),
+                            },
+                            "constraint_name": ref.get("constraint_name"),
+                            "via": "catalog-fk",
+                        }
+                    )
+    return items
+
+
+async def list_join_hints(settings: Settings) -> dict:
+    catalog = await load_catalog(settings)
+    items = catalog_fk_hints(catalog)
+    return {
+        "total": len(items),
+        "items": items,
+        "note": (
+            "/meta/catalog 컬럼의 references·referenced_by 만 모았습니다. "
+            "infer-FK·논리 동일 표 후보는 카탈로그에 없습니다."
+        ),
+    }
+
+
+async def join_tables(
+    settings: Settings,
+    store: CredentialStore,
+    args: dict[str, Any],
+) -> dict:
+    try:
+        left_on = assemble.normalize_on(args.get("left_on"))
+        right_on = assemble.normalize_on(args.get("right_on"))
+        how = assemble.parse_how(args.get("how"))
+        left_via = _parse_via(args.get("left_via"))
+        right_via = _parse_via(args.get("right_via"))
+    except assemble.AssembleError as exc:
+        raise QueryError(str(exc)) from exc
+
+    left_args = _side_args("left", args, left_on)
+    right_args = _side_args("right", args, right_on)
+    left = await _query_via(settings, store, left_via, left_args)
+    right = await _query_via(settings, store, right_via, right_args)
+
+    try:
+        items = assemble.join_rows(
+            list(left.get("items") or []),
+            list(right.get("items") or []),
+            left_on=left_on,
+            right_on=right_on,
+            how=how,
+        )
+    except assemble.AssembleError as exc:
+        raise QueryError(str(exc)) from exc
+
+    log.info(
+        "join_tables %s.%s + %s.%s how=%s rows=%s",
+        left.get("schema_name"),
+        left.get("table_name"),
+        right.get("schema_name"),
+        right.get("table_name"),
+        how,
+        len(items),
+    )
+    return {
+        "via": VIA_ASSEMBLE,
+        "how": how,
+        "left": {
+            **{key: left.get(key) for key in ("source_name", "schema_name", "table_name", "engine", "via")},
+            "on": left_on,
+            "fetched": len(left.get("items") or []),
+        },
+        "right": {
+            **{key: right.get(key) for key in ("source_name", "schema_name", "table_name", "engine", "via")},
+            "on": right_on,
+            "fetched": len(right.get("items") or []),
+        },
+        "row_count": len(items),
+        "items": items,
     }

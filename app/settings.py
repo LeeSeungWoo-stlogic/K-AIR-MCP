@@ -33,6 +33,7 @@ class Settings:
     api_host: str = "0.0.0.0"
     api_port: int = 8111
     statement_timeout_ms: int = 60000
+    tibero_jdbc_jar: str = ""
 
 
 def load_settings() -> Settings:
@@ -67,4 +68,5 @@ def load_settings() -> Settings:
         api_host=(os.environ.get("API_HOST") or "0.0.0.0").strip(),
         api_port=int((os.environ.get("API_PORT") or "8111").strip()),
         statement_timeout_ms=statement_timeout_ms,
+        tibero_jdbc_jar=(os.environ.get("TIBERO_JDBC_JAR") or "").strip(),
     )

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from .engine import is_postgres
+from .engine import POSTGRES, TIBERO, normalize_engine
 
 
 class SourcesError(RuntimeError):
@@ -46,7 +46,7 @@ def _schema_scope(row: dict) -> tuple[str, ...]:
     return tuple(names)
 
 
-def parse_postgres_endpoints(payload: dict) -> list[SourceEndpoint]:
+def parse_endpoints(payload: dict, *, engines: set[str] | None = None) -> list[SourceEndpoint]:
     rows = payload.get("datasources") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         rows = payload.get("items") if isinstance(payload, dict) else None
@@ -58,7 +58,10 @@ def parse_postgres_endpoints(payload: dict) -> list[SourceEndpoint]:
             continue
         connection = row.get("connection") if isinstance(row.get("connection"), dict) else {}
         engine_raw = row.get("engine") or row.get("source_type") or connection.get("engine")
-        if not is_postgres(engine_raw):
+        engine = normalize_engine(engine_raw)
+        if engine is None:
+            continue
+        if engines is not None and engine not in engines:
             continue
         host = str(row.get("host") or connection.get("host") or "").strip()
         port = _as_int(row.get("port") if row.get("port") is not None else connection.get("port"))
@@ -85,7 +88,7 @@ def parse_postgres_endpoints(payload: dict) -> list[SourceEndpoint]:
             SourceEndpoint(
                 source_id=source_id,
                 source_name=source_name,
-                engine="postgres",
+                engine=engine,
                 host=host,
                 port=port,
                 database=database,
@@ -96,6 +99,14 @@ def parse_postgres_endpoints(payload: dict) -> list[SourceEndpoint]:
             )
         )
     return endpoints
+
+
+def parse_postgres_endpoints(payload: dict) -> list[SourceEndpoint]:
+    return parse_endpoints(payload, engines={POSTGRES})
+
+
+def parse_tibero_endpoints(payload: dict) -> list[SourceEndpoint]:
+    return parse_endpoints(payload, engines={TIBERO})
 
 
 def find_endpoint(
@@ -141,6 +152,16 @@ async def fetch_postgres_endpoints(
     admin_token: str = "",
 ) -> list[SourceEndpoint]:
     return parse_postgres_endpoints(await fetch_sources(nk_backend_url, admin_token))
+
+
+async def fetch_direct_endpoints(
+    nk_backend_url: str,
+    admin_token: str = "",
+) -> list[SourceEndpoint]:
+    return parse_endpoints(
+        await fetch_sources(nk_backend_url, admin_token),
+        engines={POSTGRES, TIBERO},
+    )
 
 
 async def probe_sources(nk_backend_url: str, admin_token: str = "") -> str:
