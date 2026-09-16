@@ -23,8 +23,17 @@ async def fetch_catalog(robo_meta_url: str) -> dict:
 
 
 async def probe_catalog(robo_meta_url: str) -> str:
+    """stone-meta 가 살아 있는지만 본다. 카탈로그 전체를 읽지 않는다.
+
+    `/health` 가 `fetch_catalog` 를 부르면 Docker 가 30초마다 서빙 정본을 다시
+    받고, 워커 하나인 stone-meta 가 그 조회에 묶인다.
+    """
+    url = f"{robo_meta_url.rstrip('/')}/health"
     try:
-        await fetch_catalog(robo_meta_url)
-    except CatalogError:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(url)
+    except httpx.HTTPError:
+        return "unreachable"
+    if response.status_code != 200:
         return "unreachable"
     return "ok"

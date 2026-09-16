@@ -4,7 +4,12 @@
 
 **업데이트 이력:** [`change_log.md`](change_log.md)
 
-## 최근 변경 (2026-09-15)
+## 최근 변경 (2026-09-16)
+
+- **MCP `/health`.** stone `GET /health`만 본다. Docker healthcheck가 30초마다 `POST /meta/catalog` 전체를 다시 받지 않는다. 표 목록은 도구 호출 때 읽는다.
+- 상세는 [`change_log.md`](change_log.md) 2026-09-16.
+
+## 2026-09-15 이전
 
 - **카탈로그 SoT를 stone-meta-api로.** `ROBO_META_URL` 별칭은 유지한다. 표별 `schema_name`을 쓴다. 소스 `source_schema` 한 칸으로 덮지 않는다.
 - **실행 경로 둘.** `query_table` / `aggregate_table` / `get_distinct_values`는 `/query_execute`. `query_table_pg` / `aggregate_table_pg`는 nk-backend 데이터소스 host/port/db로 asyncpg. SELECT 집계는 양쪽 다 된다. 쓰기는 없다.
@@ -68,7 +73,7 @@ docker compose up -d --build
 curl.exe -fsS http://127.0.0.1:8111/health
 ```
 
-헬스 본문은 `stone_catalog` / `stone_execute` / `nk_datasources`(ok/unreachable)입니다.
+헬스 본문은 `stone_catalog` / `stone_execute` / `nk_datasources`(ok/unreachable)입니다. `stone_catalog`는 stone `GET /health` 도달 여부입니다. 카탈로그 전체를 받지 않습니다.
 
 컨테이너 HTTP:
 

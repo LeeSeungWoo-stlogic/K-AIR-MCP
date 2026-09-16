@@ -2,6 +2,14 @@
 
 K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-16
+
+### MCP `/health`는 카탈로그 전체를 읽지 않는다
+
+Docker healthcheck가 30초마다 MCP `GET /health`를 치고, 그 핸들러가 `POST /meta/catalog` 전체를 다시 받았다. stone-meta 워커가 하나라 그 조회가 안 끝나면 `/health`·`/data_decision`까지 멈췄다. `probe_catalog`는 stone `GET /health`만 본다. 표 목록은 도구가 부를 때만 `POST /meta/catalog`를 쓴다.
+
+관련: `app/catalog_client.py` · `tests/test_health_probe.py`
+
 ## 2026-09-15
 
 ### stone-meta-api 카탈로그·실행 동기화
