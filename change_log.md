@@ -2,6 +2,26 @@
 
 K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-17
+
+### 리뷰 지적 반영
+
+- **`app/gateway.py` 복원.** `main.py`가 import하지만 커밋된 적이 없어 클린 클론이 import에서 죽었다. 원본은 147 작업 트리에만 있었고, 호출 지점에서 역산해 다시 썼다.
+- **Tibero 시간 한도.** 로그인(`DriverManager.setLoginTimeout`), 문장(`setQueryTimeout`), 바깥 `asyncio.wait_for`(문장 한도 + 10초). 넘으면 문장 취소·연결 종료 후 오류. Tibero 호출은 전용 스레드 풀.
+- **직조회 동시 실행 한도.** `MCP_DIRECT_MAX_CONCURRENCY`(기본 4)를 PG·Tibero가 나눠 쓴다.
+- **계정 범위.** `set_credentials`는 API Key 해시 범위(stdio는 `local`)에만 저장, `MCP_CREDENTIALS_TTL_S`(기본 8시간) 뒤 만료. 우선순위 호출자 > env. `clear_credentials`는 호출자 범위만.
+- **읽기 전용 연결.** PG는 읽기 전용 세션·트랜잭션, Tibero는 `setReadOnly(True)`·autocommit 끔·끝에 rollback.
+- **카탈로그 캐시.** `MCP_CATALOG_TTL_S`(기본 300초) TTL 캐시, 동시 호출은 한 번만 읽음. 페이지 크기 50 → 200.
+- **PG 필터 형 변환.** `/meta/table` 컬럼 형을 보고 date/timestamp/numeric 등은 `CAST($n::text AS <형>)`로 바인드. asyncpg 클라이언트 오류도 도구 오류로.
+- **MindsDB 리터럴.** 백슬래시도 이스케이프(`\` → `\\`). NUL 거절.
+- **헬스.** `/health`는 의존 호출 없는 생존 확인. `/health/ready`는 의존 동시 확인(각 3초), 필수 실패 시 503.
+- **`/query_execute` 오류.** 422/500 본문 설명(최대 500자)을 붙이고, 200 비JSON도 도구 오류로.
+- **좌표 비노출.** `list_sources`·`set_credentials` 결과에서 host/port/database/계정명 제거.
+- **빌드.** `driver/` 디렉터리째 복사해 JAR 없이도 빌드. 없으면 Tibero 도구만 `Tibero JDBC 드라이버 미탑재`. `requirements.txt` 정확한 버전 고정, 베이스 `python:3.11.9-slim`.
+- **문서.** README를 compose 현실(MCP 컨테이너 하나, `:8111`, nginx 없음)에 맞춤. `docs/GUIDE_OA_반입준비.md` 옛 판은 현행 아님 표시 후 현행 요약 추가.
+
+관련: `app/gateway.py` · `app/direct_limit.py` · `app/tibero_runner.py` · `app/pg_runner.py` · `app/credentials.py` · `app/auth.py` · `app/catalog_client.py` · `app/sqlutil.py` · `app/intersect.py` · `app/execute_client.py` · `app/sources_client.py` · `app/tools.py` · `app/main.py` · `app/settings.py` · `Dockerfile` · `docker-compose.yml` · `requirements.txt` · `driver/README.md` · `tests/`
+
 ## 2026-09-16
 
 ### 카탈로그 목록과 상세를 나눈다

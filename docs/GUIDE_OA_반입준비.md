@@ -1,5 +1,53 @@
 # OA 반입 준비 — K-AIR-MCP
 
+> **이 문서의 2026-08-27 판은 더 이상 현행이 아니다.** 그 판은 `robo-meta-api`·`kair-mcp-query`·포트 `8110`·"Tibero 없음" 전제로 쓰였다.
+> 지금 저장소(`dev/stone-api_n_pg`)는 `stone-meta-api` + `kair-mcp-analyze`·포트 `8111`이고 PG·Tibero 직조회가 있다.
+> 현행 구성·설정의 정본은 [`README.md`](../README.md)다. 아래 "현행 요약"만 반입 준비에 쓰고, 그 밑의 옛 판은 절차 습관(save/load, LF, 망 규칙) 참고용으로만 남긴다.
+
+**갱신:** 2026-09-17
+**시크릿·접속 문자열은 이 문서에 적지 않는다.**
+
+---
+
+## 현행 요약 (2026-09-17)
+
+| 항목 | 현행 |
+|------|------|
+| 이미지 / 컨테이너 | `kair-mcp-analyze:<일자>` / `kair-mcp-analyze` |
+| 포트 | 컨테이너 `8111`. compose 기본 호스트 `8111:8111` |
+| 의존 | `stone-meta-api`(필수, `/meta/catalog`·`/meta/table`·`/meta/ref`·`/query_execute`), `nk-backend`(직조회 때만) |
+| 망 | compose 기본 `nk-net` external. 현장 망 이름은 overlay에서 바꾼다. 새 브리지를 만들지 않는다 |
+| 베이스 이미지 | `python:3.11.9-slim` (고정). 현장에서 pull·빌드하지 않는다 |
+| 의존성 | `requirements.txt` 직접 의존성 정확한 버전 고정 |
+| Tibero | 직조회 도구 있음. `driver/tibero-jdbc.jar`는 **선택**. 없으면 빌드는 되고 Tibero 도구만 `Tibero JDBC 드라이버 미탑재` 오류 |
+| 헬스 | `GET /health` 생존(의존 호출 없음, Docker healthcheck). `GET /health/ready` 의존 확인, 필수 실패 시 503 |
+
+### 반입 절차 뼈대
+
+1. 반출 쪽: (Tibero가 필요하면) `driver/tibero-jdbc.jar`를 두고 `docker compose build` → `docker tag kair-mcp-analyze:dev kair-mcp-analyze:<일자>`.
+2. `docker save kair-mcp-analyze:<일자> | gzip > kair-mcp-analyze_<일자>.tar.gz`, `SHA256SUMS`(LF) 작성.
+3. 현장: `docker load` → overlay compose에서 `image: kair-mcp-analyze:<일자>`, `pull_policy: never`.
+4. `.env` 현장 기입 후 기동. `curl -fsS http://127.0.0.1:8111/health` → `curl -sS http://127.0.0.1:8111/health/ready`로 의존까지 확인.
+
+### `.env` (이름만. 값은 현장에서)
+
+| 변수 | 비고 |
+|------|------|
+| `MCP_API_KEYS` | 필수. 현장 스모크 키 |
+| `STONE_META_URL` | 현장 stone-meta 주소 |
+| `NK_BACKEND_URL` / `NK_BACKEND_TOKEN` | 직조회를 쓸 때 |
+| `MCP_ROW_LIMIT` | 기본 200 |
+| `MCP_STATEMENT_TIMEOUT_MS` | 기본 60000. PG `statement_timeout`, Tibero `setQueryTimeout` |
+| `MCP_DIRECT_MAX_CONCURRENCY` | 기본 4. PG·Tibero 직조회 공용 동시 실행 수 |
+| `MCP_CREDENTIALS_TTL_S` | 기본 28800. `set_credentials` 계정은 API Key 범위에만 두고 이 시간 뒤 만료 |
+| `MCP_CATALOG_TTL_S` | 기본 300. 카탈로그 목록 캐시, 0이면 끔 |
+| `TIBERO_JDBC_JAR` | 기본 `/opt/tibero/jdbc/tibero-jdbc.jar`. 볼륨으로 넣을 때만 바꿈 |
+| `MCP_DS_USER_<소스>` / `MCP_DS_PASSWORD_<소스>` | 선택. 서버 공통 직조회 계정(모든 키의 기본값). 패키지에 복사하지 않는다 |
+
+---
+
+## (참고) 2026-08-27 판 — 현행 아님
+
 **작성:** 2026-08-27  
 **전제:** `robo-meta-api`와 **같은 환경**(VM 163, `robo-network`, keep `postgres_analysis`).  
 **근거:** 260825 platform/robo 반입 절차, 본 저장소 README·`docker-compose.yml`·Dockerfile, `K-water_docs/REPORT_260826_연계서버_MCP_APIKey_조회서비스.md`.  
