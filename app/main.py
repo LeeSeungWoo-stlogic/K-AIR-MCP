@@ -76,7 +76,7 @@ def _store(ctx: Context | None = None) -> ScopedCredentials:
 
 @mcp.tool()
 async def list_sources(ctx: Context) -> dict:
-    """카탈로그 소스·스키마와 data-fabric 접속 좌표(host/port/db). 비밀번호는 없다."""
+    """카탈로그 소스·엔진·스키마, 데이터소스 등록·활성 여부, 이 호출자에게 계정이 있는지. 접속 좌표·계정명·비밀번호는 없다."""
     return await tools.list_sources(_runtime(), _store(ctx))
 
 

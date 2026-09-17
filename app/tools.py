@@ -395,12 +395,11 @@ async def list_sources(
             "engine": item.engine,
             "schema_name": item.schema_name,
             "table_count": 1,
-            "host": endpoint.host if endpoint else None,
-            "port": endpoint.port if endpoint else None,
-            "database": endpoint.database if endpoint else None,
-            "username": (endpoint.username or None) if endpoint else None,
+            # 원천 접속 좌표(host/port/db)와 데이터소스 계정명은 도구 결과에 넣지 않는다.
+            "datasource_registered": endpoint is not None,
             "enabled": endpoint.enabled if endpoint else None,
             "credentials_set": store.has(item.source_name),
+            "credentials_origin": store.origin(item.source_name),
         }
     payload: dict[str, Any] = {"total": len(seen), "items": list(seen.values())}
     if sources_error:
@@ -431,9 +430,6 @@ async def set_credentials(
         "engine": endpoint.engine,
         "user": login_user,
         "configured": True,
-        "host": endpoint.host,
-        "port": endpoint.port,
-        "database": endpoint.database,
         "scope": "caller",
         "note": (
             "id/pw 는 이 호출자(API Key) 범위에만 두고 MCP_CREDENTIALS_TTL_S 뒤 사라집니다. "
