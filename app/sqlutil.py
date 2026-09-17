@@ -37,7 +37,11 @@ def sql_literal(value: Any) -> str:
         return "TRUE" if value else "FALSE"
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return str(value)
-    text = str(value).replace("'", "''")
+    text = str(value)
+    if "\x00" in text:
+        raise IdentError("filter value 에 NUL 문자는 쓸 수 없다")
+    # MindsDB 는 MySQL 방언이라 백슬래시가 이스케이프다. `\'` 가 따옴표를 닫지 못하게 백슬래시를 먼저 두 배로 만든다.
+    text = text.replace("\\", "\\\\").replace("'", "''")
     return f"'{text}'"
 
 
