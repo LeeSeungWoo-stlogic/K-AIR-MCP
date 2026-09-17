@@ -50,7 +50,7 @@ async def fetch_all(
             timeout=10,
             statement_cache_size=0,
         )
-    except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
+    except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError, TimeoutError) as exc:
         raise QueryRunError(f"원천 Postgres에 연결하지 못했습니다: {exc}") from exc
     try:
         # 조립 SELECT 만 보내지만 계정 권한과 무관하게 세션·트랜잭션을 읽기 전용으로 연다.
@@ -62,6 +62,9 @@ async def fetch_all(
             rows = await connection.fetch(sql, *params)
     except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
         raise QueryRunError(f"쿼리 실행에 실패했습니다: {exc}") from exc
+    except (asyncpg.InterfaceError, ValueError, TypeError) as exc:
+        # asyncpg.DataError(값 인코딩 실패)는 PostgresError 가 아니라 InterfaceError 계열이다.
+        raise QueryRunError(f"조회 값이 컬럼 형과 맞지 않습니다: {exc}") from exc
     finally:
         await connection.close()
     return [_row_dict(row) for row in rows[: max(1, int(max_rows))]]

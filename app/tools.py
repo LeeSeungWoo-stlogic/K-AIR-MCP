@@ -111,6 +111,14 @@ def _table_from_catalog(
     return table
 
 
+def _column_types_from_table_meta(detail: dict) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (str(col["column_name"]), str(col["data_type"]))
+        for col in detail.get("columns") or []
+        if isinstance(col, dict) and col.get("column_name") and col.get("data_type")
+    )
+
+
 def _columns_from_table_meta(detail: dict) -> tuple[str, ...]:
     names: list[str] = []
     seen: set[str] = set()
@@ -133,11 +141,12 @@ async def _table_with_columns(
     table_name: str,
     *,
     engines: set[str] | None = None,
+    need_types: bool = False,
 ) -> intersect.AllowedTable:
     table = _table_from_catalog(
         catalog, source_name, schema_name, table_name, engines=engines
     )
-    if table.columns:
+    if table.columns and (not need_types or table.column_types):
         return table
     try:
         detail = await catalog_client.fetch_table(
@@ -147,11 +156,18 @@ async def _table_with_columns(
             table_name=table.table_name,
         )
     except catalog_client.CatalogError as exc:
+        if table.columns:
+            # 컬럼은 이미 있다. 형만 못 읽었으니 형 맞춤 없이 진행한다.
+            return table
         raise QueryError(f"표 상세를 읽지 못했습니다. stone-meta-api POST /meta/table. {exc}") from exc
-    cols = _columns_from_table_meta(detail)
+    cols = table.columns or _columns_from_table_meta(detail)
     if not cols:
         raise QueryError("허용된 컬럼이 없습니다. /meta/table 에 컬럼이 없습니다.")
-    return replace(table, columns=cols)
+    return replace(
+        table,
+        columns=cols,
+        column_types=table.column_types or _column_types_from_table_meta(detail),
+    )
 
 
 def _match_endpoint(
@@ -296,6 +312,7 @@ def _parse_query_args(
             source=table.source_name if mindsdb else None,
             inline=mindsdb,
             dialect=dialect,
+            column_types=None if mindsdb else dict(table.column_types),
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
@@ -344,6 +361,7 @@ def _parse_aggregate_args(
             source=table.source_name if mindsdb else None,
             inline=mindsdb,
             dialect=dialect,
+            column_types=None if mindsdb else dict(table.column_types),
         )
     except KeyError as exc:
         raise QueryError(f"허용된 컬럼이 아닙니다: {exc.args[0]}") from exc
@@ -589,7 +607,8 @@ async def query_table_pg(
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
     table = await _table_with_columns(
-        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES}
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES},
+        need_types=bool(args.get("filters")),
     )
     sql, params, physical_columns, limit = _parse_query_args(
         table, args, settings, mindsdb=False
@@ -666,7 +685,8 @@ async def aggregate_table_pg(
     source_name, schema_name, table_name = _require_table_keys(args)
     catalog = await load_catalog(settings)
     table = await _table_with_columns(
-        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES}
+        settings, catalog, source_name, schema_name, table_name, engines={POSTGRES},
+        need_types=bool(args.get("filters")),
     )
     sql, params, func, physical_column, group_by, limit = _parse_aggregate_args(
         table, args, settings, mindsdb=False

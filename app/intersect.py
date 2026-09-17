@@ -34,6 +34,8 @@ class AllowedTable:
     columns: tuple[str, ...]
     logical_name: str = ""
     description: str = ""
+    # (물리 컬럼명, 원천 data_type). 카탈로그나 /meta/table 에 있을 때만 채운다.
+    column_types: tuple[tuple[str, str], ...] = ()
 
 
 def catalog_tables(
@@ -72,6 +74,11 @@ def catalog_tables(
                 for col in (table.get("columns") or [])
                 if isinstance(col, dict) and col.get("column_name")
             ]
+            catalog_types = tuple(
+                (str(col.get("column_name")), str(col.get("data_type")))
+                for col in (table.get("columns") or [])
+                if isinstance(col, dict) and col.get("column_name") and col.get("data_type")
+            )
             allowed.append(
                 AllowedTable(
                     source_name=source_name,
@@ -81,6 +88,7 @@ def catalog_tables(
                     columns=tuple(catalog_cols),
                     logical_name=catalog_table_logical_name(table),
                     description=catalog_table_description(table),
+                    column_types=catalog_types,
                 )
             )
     return allowed

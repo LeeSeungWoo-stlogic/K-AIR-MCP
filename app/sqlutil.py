@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .errors import IdentError
@@ -40,14 +41,92 @@ def sql_literal(value: Any) -> str:
     return f"'{text}'"
 
 
+TEXT = "text"
+_PG_TYPES = {
+    "date": "date",
+    "timestamp": "timestamp",
+    "timestamp without time zone": "timestamp",
+    "timestamptz": "timestamptz",
+    "timestamp with time zone": "timestamptz",
+    "time": "time",
+    "time without time zone": "time",
+    "smallint": "smallint",
+    "int2": "smallint",
+    "integer": "integer",
+    "int": "integer",
+    "int4": "integer",
+    "serial": "integer",
+    "bigint": "bigint",
+    "int8": "bigint",
+    "bigserial": "bigint",
+    "numeric": "numeric",
+    "decimal": "numeric",
+    "real": "real",
+    "float4": "real",
+    "double precision": "double precision",
+    "float8": "double precision",
+    "float": "double precision",
+    "boolean": "boolean",
+    "bool": "boolean",
+    "uuid": "uuid",
+    "text": TEXT,
+    "varchar": TEXT,
+    "character varying": TEXT,
+    "char": TEXT,
+    "character": TEXT,
+    "bpchar": TEXT,
+    "name": TEXT,
+    "citext": TEXT,
+}
+
+
+def pg_bind_type(data_type: object) -> str | None:
+    """원천 data_type 을 CAST 에 쓸 수 있는 고정 이름으로 줄인다. 모르면 None(형 맞춤 없이 그대로 바인드)."""
+    raw = re.sub(r"\(.*?\)", "", str(data_type or "")).strip().lower()
+    raw = " ".join(raw.split())
+    return _PG_TYPES.get(raw)
+
+
+def _text_param(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _pg_placeholder(bind_type: str | None, op: str) -> str:
+    """JSON 값은 문자열·숫자뿐이라 asyncpg 가 date/timestamp 칸에 str 을 받으면 DataError 를 낸다.
+
+    형을 알면 text 로 바인드하고 서버에서 CAST 한다. 파싱 규칙은 PG 가 정하니 MindsDB 경로 리터럴과 같다.
+    """
+    if bind_type is None or bind_type == TEXT or op == "like":
+        return "%s"
+    return f"CAST(%s::text AS {bind_type})"
+
+
+def _pg_value(bind_type: str | None, value: Any) -> Any:
+    if bind_type is None:
+        return value
+    return _text_param(value)
+
+
 def from_sql(schema: str, table: str, source: str | None = None) -> str:
     if source:
         return f"{quote_tick(source)}.{quote_tick(schema)}.{quote_tick(table)}"
     return f"{quote_ident(schema)}.{quote_ident(table)}"
 
 
-def _filter_sql(item: Filter, *, inline: bool, ticks: bool, params: list[Any]) -> str:
+def _filter_sql(
+    item: Filter,
+    *,
+    inline: bool,
+    ticks: bool,
+    params: list[Any],
+    column_types: dict[str, str] | None = None,
+) -> str:
     col = quote_sql_ident(item.column, ticks=ticks)
+    bind_type = None
+    if column_types and not inline:
+        bind_type = pg_bind_type(column_types.get(item.column))
     if item.op == "is_null":
         return f"{col} IS NULL"
     if item.op == "is_not_null":
@@ -56,12 +135,13 @@ def _filter_sql(item: Filter, *, inline: bool, ticks: bool, params: list[Any]) -
         values = list(item.value)
         if inline:
             return f"{col} IN ({', '.join(sql_literal(v) for v in values)})"
-        params.extend(values)
-        return f"{col} IN ({', '.join(['%s'] * len(values))})"
+        params.extend(_pg_value(bind_type, v) for v in values)
+        holder = _pg_placeholder(bind_type, item.op)
+        return f"{col} IN ({', '.join([holder] * len(values))})"
     if inline:
         return f"{col} {OPS[item.op]} {sql_literal(item.value)}"
-    params.append(item.value)
-    return f"{col} {OPS[item.op]} %s"
+    params.append(_pg_value(bind_type, item.value))
+    return f"{col} {OPS[item.op]} {_pg_placeholder(bind_type, item.op)}"
 
 
 def clamp_limit(value: object, default: int, maximum: int) -> int:
@@ -104,6 +184,7 @@ def assemble_select_bound(
     source: str | None = None,
     inline: bool = False,
     dialect: str = "postgres",
+    column_types: dict[str, str] | None = None,
 ) -> tuple[str, tuple[Any, ...]]:
     if not columns:
         raise IdentError("columns are required")
@@ -113,7 +194,13 @@ def assemble_select_bound(
     params: list[Any] = []
     clauses: list[str] = []
     for item in filters:
-        clauses.append(_filter_sql(item, inline=inline, ticks=ticks, params=params))
+        clauses.append(_filter_sql(
+            item,
+            inline=inline,
+            ticks=ticks,
+            params=params,
+            column_types=column_types if dialect == "postgres" else None,
+        ))
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     if order_by:
@@ -149,6 +236,7 @@ def assemble_aggregate(
     source: str | None = None,
     inline: bool = False,
     dialect: str = "postgres",
+    column_types: dict[str, str] | None = None,
 ) -> tuple[str, tuple[Any, ...]]:
     name = (func or "").strip().lower()
     if name not in AGG_FUNCS:
@@ -168,7 +256,13 @@ def assemble_aggregate(
     params: list[Any] = []
     clauses: list[str] = []
     for item in filters or []:
-        clauses.append(_filter_sql(item, inline=inline, ticks=ticks, params=params))
+        clauses.append(_filter_sql(
+            item,
+            inline=inline,
+            ticks=ticks,
+            params=params,
+            column_types=column_types if dialect == "postgres" else None,
+        ))
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     if groups:
