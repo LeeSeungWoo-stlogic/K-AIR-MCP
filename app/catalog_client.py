@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import time
+
 import httpx
 
 
@@ -7,7 +10,8 @@ class CatalogError(RuntimeError):
     pass
 
 
-PAGE_LIMIT = 50
+# stone /meta/catalog 페이지 최대값. 본문에 늘 limit 을 넣는다(빈 본문은 stone 이 전체 덤프를 낸다).
+PAGE_LIMIT = 200
 MAX_PAGES = 200
 
 
@@ -68,6 +72,46 @@ async def fetch_catalog(robo_meta_url: str) -> dict:
     except httpx.HTTPError as exc:
         raise CatalogError(f"catalog request failed: {exc}") from exc
     return _merge_catalog_sources(pages)
+
+
+_cache: dict[str, tuple[float, dict]] = {}
+_locks: dict[tuple[int, str], asyncio.Lock] = {}
+
+
+def clear_catalog_cache() -> None:
+    _cache.clear()
+    _locks.clear()
+
+
+def _lock_for(key: str) -> asyncio.Lock:
+    loop_id = id(asyncio.get_running_loop())
+    lock = _locks.get((loop_id, key))
+    if lock is None:
+        for stale in [k for k in _locks if k[0] != loop_id]:
+            _locks.pop(stale, None)
+        lock = asyncio.Lock()
+        _locks[(loop_id, key)] = lock
+    return lock
+
+
+async def fetch_catalog_cached(robo_meta_url: str, ttl_s: float, *, clock=time.monotonic) -> dict:
+    """프로세스 안 TTL 캐시. 동시에 비어 있으면 한 번만 읽고(single-flight) 나머지는 그 결과를 쓴다.
+
+    실패는 캐시에 넣지 않는다. ttl_s <= 0 이면 매번 읽는다.
+    """
+    if ttl_s <= 0:
+        return await fetch_catalog(robo_meta_url)
+    key = robo_meta_url.rstrip("/")
+    hit = _cache.get(key)
+    if hit is not None and hit[0] > clock():
+        return hit[1]
+    async with _lock_for(key):
+        hit = _cache.get(key)
+        if hit is not None and hit[0] > clock():
+            return hit[1]
+        payload = await fetch_catalog(robo_meta_url)
+        _cache[key] = (clock() + float(ttl_s), payload)
+        return payload
 
 
 async def fetch_table(

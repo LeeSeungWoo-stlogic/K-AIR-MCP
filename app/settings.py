@@ -36,6 +36,7 @@ class Settings:
     tibero_jdbc_jar: str = ""
     direct_max_concurrency: int = 4
     credentials_ttl_s: int = 28800
+    catalog_ttl_s: int = 300
 
 
 def load_settings() -> Settings:
@@ -71,6 +72,14 @@ def load_settings() -> Settings:
     if credentials_ttl_s < 1:
         raise SettingsError("MCP_CREDENTIALS_TTL_S must be >= 1")
 
+    catalog_ttl_raw = (os.environ.get("MCP_CATALOG_TTL_S") or "300").strip()
+    try:
+        catalog_ttl_s = int(catalog_ttl_raw)
+    except ValueError as exc:
+        raise SettingsError("MCP_CATALOG_TTL_S must be an integer") from exc
+    if catalog_ttl_s < 0:
+        raise SettingsError("MCP_CATALOG_TTL_S must be >= 0")
+
     stone = (
         (os.environ.get("STONE_META_URL") or os.environ.get("ROBO_META_URL") or "http://127.0.0.1:8096")
         .strip()
@@ -89,4 +98,5 @@ def load_settings() -> Settings:
         tibero_jdbc_jar=(os.environ.get("TIBERO_JDBC_JAR") or "").strip(),
         direct_max_concurrency=direct_max_concurrency,
         credentials_ttl_s=credentials_ttl_s,
+        catalog_ttl_s=catalog_ttl_s,
     )

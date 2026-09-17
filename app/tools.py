@@ -66,7 +66,7 @@ def _table_labels(item: intersect.AllowedTable) -> dict[str, str | None]:
 
 async def load_catalog(settings: Settings) -> dict:
     try:
-        return await catalog_client.fetch_catalog(settings.stone_meta_url)
+        return await catalog_client.fetch_catalog_cached(settings.stone_meta_url, settings.catalog_ttl_s)
     except catalog_client.CatalogError as exc:
         raise QueryError(CATALOG_UNREACHABLE) from exc
 
