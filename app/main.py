@@ -7,15 +7,16 @@ from pathlib import Path
 
 import uvicorn
 from dotenv import load_dotenv
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from . import catalog_client, execute_client, sources_client, tools
-from .auth import key_ok
+from .auth import api_key_from_headers, key_ok
 from .cli import parse_args
 from .gateway import health_path
+from .credentials import LOCAL_SCOPE, ScopedCredentials, scope_for_api_key
 from .runtime import RT
 from .settings import SettingsError, load_settings
 
@@ -51,26 +52,44 @@ def _runtime():
     return RT.settings
 
 
-def _store():
-    return RT.credentials
+def _caller_scope(ctx: Context | None) -> str:
+    """계정 범위. HTTP 는 인증된 API Key 의 해시, stdio 는 로컬 한 사용자."""
+    request = None
+    if ctx is not None:
+        try:
+            request = ctx.request_context.request
+        except ValueError:
+            request = None
+    if request is None:
+        if RT.transport == "http":
+            raise tools.QueryError("호출자 API Key 를 확인할 수 없어 계정 범위를 열지 않습니다.")
+        return LOCAL_SCOPE
+    provided = api_key_from_headers(request.headers)
+    if not provided:
+        raise tools.QueryError("호출자 API Key 를 확인할 수 없어 계정 범위를 열지 않습니다.")
+    return scope_for_api_key(provided)
+
+
+def _store(ctx: Context | None = None) -> ScopedCredentials:
+    return RT.credentials.scoped(_caller_scope(ctx))
 
 
 @mcp.tool()
-async def list_sources() -> dict:
+async def list_sources(ctx: Context) -> dict:
     """카탈로그 소스·스키마와 data-fabric 접속 좌표(host/port/db). 비밀번호는 없다."""
-    return await tools.list_sources(_runtime(), _store())
+    return await tools.list_sources(_runtime(), _store(ctx))
 
 
 @mcp.tool()
-async def set_credentials(source_name: str, user: str, password: str) -> dict:
-    """직조회(PG/Tibero) 계정. 재시작 후에도 쓰려면 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
-    return await tools.set_credentials(_runtime(), _store(), source_name, user, password)
+async def set_credentials(source_name: str, user: str, password: str, ctx: Context) -> dict:
+    """직조회(PG/Tibero) 계정. 이 API Key 범위에만 두고 MCP_CREDENTIALS_TTL_S 뒤 만료된다. 서버 공통 계정은 운영자가 MCP_DS_USER_<소스>/MCP_DS_PASSWORD_<소스> 에 둔다. 비밀번호는 결과에 넣지 않는다."""
+    return await tools.set_credentials(_runtime(), _store(ctx), source_name, user, password)
 
 
 @mcp.tool()
-async def clear_credentials(source_name: str | None = None) -> dict:
-    """넣어 둔 계정을 지운다. source_name 이 없으면 전부 지운다."""
-    return await tools.clear_credentials(_store(), source_name)
+async def clear_credentials(ctx: Context, source_name: str | None = None) -> dict:
+    """이 API Key 범위에 넣어 둔 계정을 지운다. source_name 이 없으면 이 범위 전부. env 기본값은 남는다."""
+    return await tools.clear_credentials(_store(ctx), source_name)
 
 
 @mcp.tool()
@@ -104,11 +123,12 @@ async def get_distinct_values(
     table_name: str,
     column_name: str,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 컬럼의 고유값. stone-meta-api /query_execute 로 조회한다."""
     return await tools.get_distinct_values(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -128,11 +148,12 @@ async def query_table(
     filters: list[dict] | None = None,
     order_by: list[dict] | None = None,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 한 표에서 조립한 SELECT를 stone-meta-api /query_execute (MindsDB) 로 실행한다."""
     return await tools.query_table(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -154,11 +175,12 @@ async def query_table_pg(
     filters: list[dict] | None = None,
     order_by: list[dict] | None = None,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 한 표에서 조립한 SELECT를 원천 Postgres에 직접 실행한다. set_credentials 필요. INSERT/UPDATE/DDL 없음."""
     return await tools.query_table_pg(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -180,11 +202,12 @@ async def query_table_tibero(
     filters: list[dict] | None = None,
     order_by: list[dict] | None = None,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 Tibero 한 표에서 조립한 SELECT를 JDBC로 직접 실행한다. set_credentials 필요. INSERT/UPDATE/DDL 없음."""
     return await tools.query_table_tibero(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -207,11 +230,12 @@ async def aggregate_table(
     group_by: list[str] | None = None,
     filters: list[dict] | None = None,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 한 표에서 count/sum/avg/max/min 을 조립해 /query_execute 로 실행한다."""
     return await tools.aggregate_table(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -235,11 +259,12 @@ async def aggregate_table_pg(
     group_by: list[str] | None = None,
     filters: list[dict] | None = None,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 한 표에서 count/sum/avg/max/min 을 조립해 원천 Postgres에 직접 실행한다. set_credentials 필요. MindsDB를 거치지 않는다."""
     return await tools.aggregate_table_pg(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -263,11 +288,12 @@ async def aggregate_table_tibero(
     group_by: list[str] | None = None,
     filters: list[dict] | None = None,
     limit: int = 50,
+    ctx: Context | None = None,
 ) -> dict:
     """허용된 Tibero 한 표에서 count/sum/avg/max/min 을 조립해 JDBC로 직접 실행한다. set_credentials 필요."""
     return await tools.aggregate_table_tibero(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "source_name": source_name,
             "schema_name": schema_name,
@@ -300,11 +326,12 @@ async def join_tables(
     left_limit: int = 50,
     right_limit: int = 50,
     how: str = "inner",
+    ctx: Context | None = None,
 ) -> dict:
     """두 표를 각 경로로 조회한 뒤 MCP에서 붙인다. 엔진에 JOIN SQL을 보내지 않는다. via는 mindsdb, pg, tibero."""
     return await tools.join_tables(
         _runtime(),
-        _store(),
+        _store(ctx),
         {
             "left_source_name": left_source_name,
             "left_schema_name": left_schema_name,
@@ -358,12 +385,7 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if health_path(request.url.path):
             return await call_next(request)
-        provided = (request.headers.get("x-api-key") or "").strip()
-        authorization = request.headers.get("authorization") or ""
-        if not provided and authorization.lower().startswith("apikey "):
-            provided = authorization[7:].strip()
-        if not provided and authorization.lower().startswith("bearer "):
-            provided = authorization[7:].strip()
+        provided = api_key_from_headers(request.headers)
         allowed = RT.settings.api_keys if RT.settings else ()
         if not provided or not key_ok(provided, allowed):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
@@ -376,6 +398,7 @@ async def _open_runtime() -> None:
     except SettingsError as exc:
         raise SystemExit(str(exc)) from exc
     RT.settings = settings
+    RT.credentials.set_ttl(settings.credentials_ttl_s)
     seeded = RT.credentials.load_environ()
     log.info(
         "mcp ready stone=%s nk=%s env_credentials=%s",
@@ -386,6 +409,7 @@ async def _open_runtime() -> None:
 
 
 async def serve_http() -> None:
+    RT.transport = "http"
     await _open_runtime()
     try:
         app = mcp.streamable_http_app()
@@ -394,16 +418,17 @@ async def serve_http() -> None:
         await uvicorn.Server(config).serve()
     finally:
         RT.settings = None
-        RT.credentials.clear()
+        RT.credentials.clear_all()
 
 
 async def serve_stdio() -> None:
+    RT.transport = "stdio"
     await _open_runtime()
     try:
         await mcp.run_stdio_async()
     finally:
         RT.settings = None
-        RT.credentials.clear()
+        RT.credentials.clear_all()
 
 
 def run(argv: list[str] | None = None) -> None:

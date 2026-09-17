@@ -7,7 +7,7 @@ from typing import Any
 from . import assemble, catalog_client, execute_client, filters, intersect, pg_runner, sources_client, sqlutil, tibero_runner
 from .direct_limit import DirectBusyError, direct_slot
 from .engine import POSTGRES, TIBERO
-from .credentials import CredentialStore
+from .credentials import ScopedCredentials
 from .errors import IdentError
 from .settings import Settings
 from .sources_client import SourceEndpoint
@@ -200,7 +200,7 @@ def _direct_slot(settings: Settings):
 
 async def _execute_pg(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     table: intersect.AllowedTable,
     sql: str,
     params: tuple[Any, ...] = (),
@@ -229,7 +229,7 @@ async def _execute_pg(
 
 async def _execute_tibero(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     table: intersect.AllowedTable,
     sql: str,
     params: tuple[Any, ...] = (),
@@ -354,7 +354,7 @@ def _parse_aggregate_args(
 
 async def list_sources(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
 ) -> dict:
     catalog = await load_catalog(settings)
     allowed = intersect.catalog_tables(catalog, postgres_only=False, engines={POSTGRES, TIBERO})
@@ -392,7 +392,7 @@ async def list_sources(
 
 async def set_credentials(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     source_name: str,
     user: str,
     password: str,
@@ -416,16 +416,25 @@ async def set_credentials(
         "host": endpoint.host,
         "port": endpoint.port,
         "database": endpoint.database,
-        "note": "id/pw 는 query_table_pg / query_table_tibero / 집계 직조회에만 씁니다. MindsDB 조회에는 필요 없습니다.",
+        "scope": "caller",
+        "note": (
+            "id/pw 는 이 호출자(API Key) 범위에만 두고 MCP_CREDENTIALS_TTL_S 뒤 사라집니다. "
+            "query_table_pg / query_table_tibero / 집계 직조회에만 씁니다. MindsDB 조회에는 필요 없습니다."
+        ),
     }
 
 
 async def clear_credentials(
-    store: CredentialStore,
+    store: ScopedCredentials,
     source_name: str | None = None,
 ) -> dict:
     store.clear(source_name)
-    return {"cleared": True, "source_name": source_name}
+    return {
+        "cleared": True,
+        "source_name": source_name,
+        "scope": "caller",
+        "note": "이 호출자 범위만 지웠습니다. 운영자 env(MCP_DS_USER_/PASSWORD_) 기본값은 남습니다.",
+    }
 
 
 async def list_tables(
@@ -503,7 +512,7 @@ async def describe_table(
 
 async def get_distinct_values(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -551,7 +560,7 @@ async def get_distinct_values(
 
 async def query_table(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -574,7 +583,7 @@ async def query_table(
 
 async def query_table_pg(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -597,7 +606,7 @@ async def query_table_pg(
 
 async def query_table_tibero(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -620,7 +629,7 @@ async def query_table_tibero(
 
 async def aggregate_table(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -651,7 +660,7 @@ async def aggregate_table(
 
 async def aggregate_table_pg(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -682,7 +691,7 @@ async def aggregate_table_pg(
 
 async def aggregate_table_tibero(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     source_name, schema_name, table_name = _require_table_keys(args)
@@ -713,7 +722,7 @@ async def aggregate_table_tibero(
 
 async def _query_via(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     via: str,
     args: dict[str, Any],
 ) -> dict:
@@ -869,7 +878,7 @@ async def list_join_hints(settings: Settings, args: dict[str, Any]) -> dict:
 
 async def join_tables(
     settings: Settings,
-    store: CredentialStore,
+    store: ScopedCredentials,
     args: dict[str, Any],
 ) -> dict:
     try:
