@@ -5,6 +5,7 @@ from dataclasses import replace
 from typing import Any
 
 from . import assemble, catalog_client, execute_client, filters, intersect, pg_runner, sources_client, sqlutil, tibero_runner
+from .direct_limit import DirectBusyError, direct_slot
 from .engine import POSTGRES, TIBERO
 from .credentials import CredentialStore
 from .errors import IdentError
@@ -189,6 +190,14 @@ async def _execute_mindsdb(
         raise QueryError(f"{EXECUTE_UNREACHABLE} {exc}") from exc
 
 
+def _direct_slot(settings: Settings):
+    """PG·Tibero 직조회 공용 슬롯. 슬롯 대기도 문장 한도만큼만 기다린다."""
+    return direct_slot(
+        settings.direct_max_concurrency,
+        wait_s=max(1.0, settings.statement_timeout_ms / 1000),
+    )
+
+
 async def _execute_pg(
     settings: Settings,
     store: CredentialStore,
@@ -204,16 +213,17 @@ async def _execute_pg(
     if login is None:
         raise QueryError(NEED_CREDENTIALS)
     try:
-        return await pg_runner.fetch_all(
-            endpoint,
-            user=login.user,
-            password=login.password,
-            sql=sql,
-            params=params,
-            max_rows=max_rows,
-            statement_timeout_ms=settings.statement_timeout_ms,
-        )
-    except pg_runner.QueryRunError as exc:
+        async with _direct_slot(settings):
+            return await pg_runner.fetch_all(
+                endpoint,
+                user=login.user,
+                password=login.password,
+                sql=sql,
+                params=params,
+                max_rows=max_rows,
+                statement_timeout_ms=settings.statement_timeout_ms,
+            )
+    except (pg_runner.QueryRunError, DirectBusyError) as exc:
         raise QueryError(str(exc)) from exc
 
 
@@ -232,16 +242,19 @@ async def _execute_tibero(
     if login is None:
         raise QueryError(NEED_CREDENTIALS)
     try:
-        return await tibero_runner.fetch_all(
-            endpoint,
-            user=login.user,
-            password=login.password,
-            sql=sql,
-            params=params,
-            max_rows=max_rows,
-            jar_path=settings.tibero_jdbc_jar or None,
-        )
-    except tibero_runner.QueryRunError as exc:
+        async with _direct_slot(settings):
+            return await tibero_runner.fetch_all(
+                endpoint,
+                user=login.user,
+                password=login.password,
+                sql=sql,
+                params=params,
+                max_rows=max_rows,
+                jar_path=settings.tibero_jdbc_jar or None,
+                statement_timeout_ms=settings.statement_timeout_ms,
+                max_concurrency=settings.direct_max_concurrency,
+            )
+    except (tibero_runner.QueryRunError, DirectBusyError) as exc:
         raise QueryError(str(exc)) from exc
 
 

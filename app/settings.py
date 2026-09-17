@@ -34,6 +34,7 @@ class Settings:
     api_port: int = 8111
     statement_timeout_ms: int = 60000
     tibero_jdbc_jar: str = ""
+    direct_max_concurrency: int = 4
 
 
 def load_settings() -> Settings:
@@ -53,6 +54,14 @@ def load_settings() -> Settings:
     if statement_timeout_ms < 1:
         raise SettingsError("MCP_STATEMENT_TIMEOUT_MS must be >= 1")
 
+    concurrency_raw = (os.environ.get("MCP_DIRECT_MAX_CONCURRENCY") or "4").strip()
+    try:
+        direct_max_concurrency = int(concurrency_raw)
+    except ValueError as exc:
+        raise SettingsError("MCP_DIRECT_MAX_CONCURRENCY must be an integer") from exc
+    if direct_max_concurrency < 1:
+        raise SettingsError("MCP_DIRECT_MAX_CONCURRENCY must be >= 1")
+
     stone = (
         (os.environ.get("STONE_META_URL") or os.environ.get("ROBO_META_URL") or "http://127.0.0.1:8096")
         .strip()
@@ -69,4 +78,5 @@ def load_settings() -> Settings:
         api_port=int((os.environ.get("API_PORT") or "8111").strip()),
         statement_timeout_ms=statement_timeout_ms,
         tibero_jdbc_jar=(os.environ.get("TIBERO_JDBC_JAR") or "").strip(),
+        direct_max_concurrency=direct_max_concurrency,
     )
