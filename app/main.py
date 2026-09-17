@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import catalog_client, execute_client, sources_client, tools
+from . import catalog_client, sources_client, tools
 from .auth import api_key_from_headers, key_ok
 from .cli import parse_args
 from .gateway import health_path
@@ -354,30 +354,60 @@ async def join_tables(
     )
 
 
+READY_PROBE_TIMEOUT_S = 3.0
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> Response:
-    stone_catalog = "unreachable"
-    stone_execute = "unreachable"
-    nk_datasources = "unreachable"
-    if RT.settings is not None:
-        stone_catalog = await catalog_client.probe_catalog(RT.settings.stone_meta_url)
-        stone_execute = await execute_client.probe_execute(RT.settings.stone_meta_url)
-        nk_datasources = await sources_client.probe_sources(
-            RT.settings.nk_backend_url,
-            RT.settings.nk_backend_token,
-        )
+    """생존 확인. 의존 서비스를 부르지 않는다. Docker healthcheck 가 이 경로를 친다."""
     return JSONResponse(
         {
             "status": "ok",
             "server": "kair-mcp-analyze",
             "transport": "streamable-http",
-            "catalog": "stone-meta-api /meta/catalog",
-            "query": "stone-meta-api /query_execute",
-            "query_pg": "nk-backend datasources + asyncpg",
-            "stone_catalog": stone_catalog,
-            "stone_execute": stone_execute,
-            "nk_datasources": nk_datasources,
+            "ready": "/health/ready",
         }
+    )
+
+
+async def _probe(coro) -> str:
+    try:
+        return await asyncio.wait_for(coro, timeout=READY_PROBE_TIMEOUT_S + 0.5)
+    except (asyncio.TimeoutError, TimeoutError):
+        return "timeout"
+    except Exception:  # noqa: BLE001 - 준비 확인은 어떤 실패든 상태 문자열로만 알린다
+        return "unreachable"
+
+
+@mcp.custom_route("/health/ready", methods=["GET"])
+async def health_ready(_request: Request) -> Response:
+    """준비 확인. 의존 서비스를 동시에 짧게(각 3초 이하) 본다.
+
+    필수(stone-meta /health)가 안 되면 503. 선택(nk-backend datasources, 직조회용)만 안 되면 200 degraded.
+    """
+    settings = RT.settings
+    if settings is None:
+        return JSONResponse({"status": "unavailable", "server": "kair-mcp-analyze", "deps": {}}, status_code=503)
+    stone_meta, nk_datasources = await asyncio.gather(
+        _probe(catalog_client.probe_catalog(settings.stone_meta_url, timeout_s=READY_PROBE_TIMEOUT_S)),
+        _probe(
+            sources_client.probe_sources(
+                settings.nk_backend_url,
+                settings.nk_backend_token,
+                timeout_s=READY_PROBE_TIMEOUT_S,
+            )
+        ),
+    )
+    deps = {
+        "stone_meta": {"status": stone_meta, "required": True, "used_by": "/meta/catalog, /query_execute"},
+        "nk_datasources": {"status": nk_datasources, "required": False, "used_by": "PG/Tibero 직조회"},
+    }
+    required_down = any(d["required"] and d["status"] != "ok" for d in deps.values())
+    optional_down = any(not d["required"] and d["status"] != "ok" for d in deps.values())
+    status = "unavailable" if required_down else ("degraded" if optional_down else "ok")
+    return JSONResponse(
+        {"status": status, "server": "kair-mcp-analyze", "deps": deps},
+        status_code=503 if required_down else 200,
     )
 
 

@@ -129,13 +129,13 @@ def schema_allowed(endpoint: SourceEndpoint, schema_name: str) -> bool:
     return True
 
 
-async def fetch_sources(nk_backend_url: str, admin_token: str = "") -> dict:
+async def fetch_sources(nk_backend_url: str, admin_token: str = "", *, timeout_s: float = 15.0) -> dict:
     url = f"{nk_backend_url.rstrip('/')}{DATASOURCES_PATH}"
     headers: dict[str, str] = {}
     if admin_token:
         headers["Authorization"] = f"Bearer {admin_token}"
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
             response = await client.get(url, headers=headers)
     except httpx.HTTPError as exc:
         raise SourcesError(f"sources request failed: {exc}") from exc
@@ -164,9 +164,9 @@ async def fetch_direct_endpoints(
     )
 
 
-async def probe_sources(nk_backend_url: str, admin_token: str = "") -> str:
+async def probe_sources(nk_backend_url: str, admin_token: str = "", timeout_s: float = 15.0) -> str:
     try:
-        await fetch_sources(nk_backend_url, admin_token)
+        await fetch_sources(nk_backend_url, admin_token, timeout_s=timeout_s)
     except SourcesError:
         return "unreachable"
     return "ok"

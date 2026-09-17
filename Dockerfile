@@ -16,8 +16,9 @@ COPY driver/tibero-jdbc.jar ${TIBERO_JDBC_JAR}
 
 EXPOSE 8111
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8111/health || exit 1
+# /health 는 의존 서비스를 부르지 않는 생존 확인이다. 의존 확인은 /health/ready (503 가능).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+    CMD curl -fsS --max-time 2 http://127.0.0.1:8111/health || exit 1
 
 ENTRYPOINT ["python", "-m", "app.main"]
 CMD ["--transport", "http"]

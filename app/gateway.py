@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 # Docker healthcheck·프록시가 키 없이 치는 경로. `/mcp` 는 절대 넣지 않는다.
-HEALTH_PATHS = frozenset({"/health"})
+# /health 는 프로세스 생존만, /health/ready 는 의존 서비스까지 본다.
+HEALTH_PATHS = frozenset({"/health", "/health/ready"})
 
 
 def health_path(path: str) -> bool:

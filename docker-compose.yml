@@ -27,9 +27,10 @@ services:
     networks:
       - nk-net
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8111/health"]
+      # 생존 확인만. 의존 서비스 확인은 GET /health/ready (필수 의존이 죽으면 503).
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:8111/health"]
       interval: 30s
-      timeout: 5s
+      timeout: 3s
       retries: 3
       start_period: 15s
 

@@ -175,7 +175,7 @@ async def fetch_refs(
     return fks if isinstance(fks, list) else []
 
 
-async def probe_catalog(robo_meta_url: str) -> str:
+async def probe_catalog(robo_meta_url: str, timeout_s: float = 8.0) -> str:
     """stone-meta 가 살아 있는지만 본다. 카탈로그 전체를 읽지 않는다.
 
     `/health` 가 `fetch_catalog` 를 부르면 Docker 가 30초마다 목록을 다시 받고,
@@ -183,7 +183,7 @@ async def probe_catalog(robo_meta_url: str) -> str:
     """
     url = f"{robo_meta_url.rstrip('/')}/health"
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=timeout_s) as client:
             response = await client.get(url)
     except httpx.HTTPError:
         return "unreachable"
