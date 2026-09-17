@@ -252,6 +252,11 @@ async def _execute_tibero(
     *,
     max_rows: int,
 ) -> list[dict]:
+    # 드라이버가 없으면 데이터소스·계정을 보기 전에 바로 알린다.
+    try:
+        tibero_runner.jdbc_jar_path(settings.tibero_jdbc_jar or None)
+    except tibero_runner.QueryRunError as exc:
+        raise QueryError(str(exc)) from exc
     endpoints = await load_endpoints(settings)
     endpoint = _match_endpoint(endpoints, table)
     login = store.get(table.source_name)

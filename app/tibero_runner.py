@@ -41,7 +41,8 @@ def jdbc_jar_path(explicit: str | None = None) -> str:
     path = Path(candidate)
     if not path.is_file():
         raise QueryRunError(
-            f"Tibero JDBC JAR 이 없습니다: {path}. TIBERO_JDBC_JAR 로 마운트 경로를 지정하세요."
+            f"Tibero JDBC 드라이버 미탑재: {path} 에 JAR 이 없습니다. "
+            "이미지 빌드 때 driver/tibero-jdbc.jar 를 두거나 TIBERO_JDBC_JAR 로 마운트 경로를 지정하세요."
         )
     return str(path)
 
