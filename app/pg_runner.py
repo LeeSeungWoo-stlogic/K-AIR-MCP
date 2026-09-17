@@ -53,8 +53,13 @@ async def fetch_all(
     except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
         raise QueryRunError(f"원천 Postgres에 연결하지 못했습니다: {exc}") from exc
     try:
-        await connection.execute(f"SET statement_timeout = {int(statement_timeout_ms)}")
-        rows = await connection.fetch(sql, *params)
+        # 조립 SELECT 만 보내지만 계정 권한과 무관하게 세션·트랜잭션을 읽기 전용으로 연다.
+        await connection.execute(
+            f"SET statement_timeout = {int(statement_timeout_ms)}; "
+            "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
+        )
+        async with connection.transaction(readonly=True):
+            rows = await connection.fetch(sql, *params)
     except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
         raise QueryRunError(f"쿼리 실행에 실패했습니다: {exc}") from exc
     finally:

@@ -96,6 +96,31 @@ def _set_login_timeout(seconds: int) -> None:
         pass
 
 
+def _make_read_only(connection: Any) -> None:
+    """최선 노력. 드라이버가 readOnly 힌트를 무시해도 autocommit 끄고 끝에 rollback 한다."""
+    jconn = getattr(connection, "jconn", None)
+    if jconn is None:
+        return
+    try:
+        jconn.setReadOnly(True)
+    except Exception:
+        pass
+    try:
+        jconn.setAutoCommit(False)
+    except Exception:
+        pass
+
+
+def _rollback_quietly(connection: Any) -> None:
+    jconn = getattr(connection, "jconn", None)
+    if jconn is None:
+        return
+    try:
+        jconn.rollback()
+    except Exception:
+        pass
+
+
 def _execute_with_timeout(cursor: Any, sql: str, params: tuple[Any, ...], timeout_s: int, handle: _Handle) -> None:
     """jaydebeapi Cursor.execute 와 같되, 실행 전에 Statement.setQueryTimeout 을 건다.
 
@@ -149,6 +174,7 @@ def _fetch_sync(
             abandoned = handle.abandoned
         if abandoned:
             raise QueryRunError("원천 Tibero 조회가 시간 초과로 취소되었습니다.")
+        _make_read_only(connection)
         cursor = connection.cursor()
         _execute_with_timeout(cursor, sql, params, timeout_s, handle)
         description = cursor.description or []
@@ -173,6 +199,7 @@ def _fetch_sync(
             except Exception:
                 pass
         if connection is not None:
+            _rollback_quietly(connection)
             try:
                 connection.close()
             except Exception:
