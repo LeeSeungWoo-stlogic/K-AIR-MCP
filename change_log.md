@@ -2,6 +2,22 @@
 
 K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-22
+
+### Tibero 7 Zeta LIMIT 문법 적용
+
+기존 구버전용 `SELECT * FROM (...) q WHERE ROWNUM <= N` 인라인 뷰 서브쿼리 래핑을 걷어내고, Tibero 7 Zeta 공식 지원 문법인 `LIMIT N`을 직접 적용한다. 불필요한 서브쿼리 및 정렬 순서 오버헤드를 해소하고 쿼리 조립 로직을 단순화한다.
+
+관련: `app/sqlutil.py` · `tests/test_tibero_direct.py`
+
+### `join_tables` 2단계 WHERE IN 주입 및 멀티턴 범위 정제 지원
+
+두 테이블을 독립 조회하던 기존 방식에서, 1단계 마스터(left) 조건 검색 결과에서 키를 추출해 2단계 팩트(right) 테이블의 `WHERE IN (...)` 절로 자동 주입하는 2단계 분할 조회 방식으로 고도화한다.
+
+1단계 키 개수가 `max_in_keys`(기본 100)를 초과하면 무리하게 2단계를 조회하지 않고 `TOO_MANY_CANDIDATES` 상태와 안내 메시지 및 후보 샘플을 반환하여, 에이전트가 사용자에게 권역이나 명칭 조건을 구체화하도록 되묻는 멀티턴 정제를 유도한다.
+
+관련: `app/assemble.py` · `app/tools.py` · `app/main.py` · `tests/test_assemble_join.py`
+
 ## 2026-09-17
 
 ### 리뷰 지적 반영

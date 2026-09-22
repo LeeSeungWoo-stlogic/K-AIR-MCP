@@ -170,10 +170,9 @@ def _to_asyncpg(sql: str) -> str:
 
 
 def _finish_sql(sql: str, params: list[Any], *, dialect: str, limit: int) -> tuple[str, tuple[Any, ...]]:
-    if dialect == "tibero":
-        wrapped = f"SELECT * FROM ({sql}) q WHERE ROWNUM <= {int(limit)}"
-        return wrapped.replace("%s", "?"), tuple(params)
     sql += f" LIMIT {int(limit)}"
+    if dialect == "tibero":
+        return sql.replace("%s", "?"), tuple(params)
     return _to_asyncpg(sql), tuple(params)
 
 

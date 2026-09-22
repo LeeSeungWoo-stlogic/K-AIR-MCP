@@ -106,7 +106,7 @@ def test_jdbc_url_rejects_bad_host():
     raise AssertionError("bad host must fail")
 
 
-def test_assemble_select_tibero_uses_qmark_and_rownum():
+def test_assemble_select_tibero_uses_qmark_and_limit():
     sql, params = assemble_select_bound(
         "NBEAVER",
         "DAMCD",
@@ -116,8 +116,8 @@ def test_assemble_select_tibero_uses_qmark_and_rownum():
         5,
         dialect="tibero",
     )
-    assert "ROWNUM <= 5" in sql
+    assert "LIMIT 5" in sql
     assert "?" in sql
     assert "$1" not in sql
-    assert "LIMIT" not in sql
+    assert "ROWNUM" not in sql
     assert params == ("A",)

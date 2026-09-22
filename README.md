@@ -6,6 +6,13 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 
 **업데이트 이력:** [`change_log.md`](change_log.md)
 
+## 최근 변경 (2026-09-22)
+
+- **Tibero 7 Zeta LIMIT 지원.** 기존 ROWNUM 인라인 뷰 서브쿼리 래핑을 제거하고, Tibero 7 Zeta에서 공식 지원하는 `LIMIT N` 구문을 직접 적용.
+- **`join_tables` 2단계 WHERE IN 주입.** 1단계 마스터(left) 조건 검색 결과에서 키를 추출해 2단계 팩트(right)의 `WHERE IN (...)` 절로 자동 주입.
+- **멀티턴 정제 유도 (`TOO_MANY_CANDIDATES`).** 1단계 조인 키 개수가 `max_in_keys`(기본 100건)를 초과하면 2단계 조회를 중단하고 안내 메시지 및 샘플 후보를 반환하여, 에이전트가 사용자에게 조건을 구체화하도록 되묻게 유도.
+- 상세는 [`change_log.md`](change_log.md) 2026-09-22.
+
 ## 최근 변경 (2026-09-17)
 
 - **계정 범위.** `set_credentials` 계정은 호출한 API Key 범위에만 들어가고 `MCP_CREDENTIALS_TTL_S`(기본 8시간) 뒤 사라진다. 다른 키는 볼 수 없다. 운영자 env 계정은 서버 공통 기본값이다.
@@ -48,7 +55,7 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 | `aggregate_table` | `count`/`sum`/`avg`/`max`/`min`. `/query_execute` |
 | `aggregate_table_pg` | 같은 집계를 원천 Postgres에 직접 실행. 계정 필요 |
 | `aggregate_table_tibero` | 같은 집계를 원천 Tibero에 JDBC 직조회. 계정·JAR 필요 |
-| `join_tables` | 두 표를 mindsdb/pg/tibero로 조회한 뒤 MCP에서 붙인다. JOIN SQL을 엔진에 보내지 않음. 조인 키는 호출자가 줌 |
+| `join_tables` | 1단계 마스터 검색 키를 2단계 WHERE IN 절로 주입해 MCP에서 결합. 100건 초과 시 되묻기 유도(`TOO_MANY_CANDIDATES`) |
 | `set_credentials` | 직조회용 id/pw. **이 API Key 범위**에만 두고 `MCP_CREDENTIALS_TTL_S` 뒤 만료. 결과에 비밀번호 없음 |
 | `clear_credentials` | 이 API Key 범위의 계정만 삭제. env 기본값·다른 키는 그대로 |
 

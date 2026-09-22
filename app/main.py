@@ -32,11 +32,12 @@ mcp = FastMCP(
         "표 목록은 stone-meta-api POST /meta/catalog. "
         "query_table / aggregate_table / get_distinct_values 는 stone-meta POST /query_execute (MindsDB). "
         "query_table_pg / aggregate_table_pg 는 nk-backend 데이터소스 좌표로 원천 Postgres에 직접 실행. "
-        "query_table_tibero / aggregate_table_tibero 는 같은 좌표로 원천 Tibero에 JDBC 직조회. "
+        "query_table_tibero / aggregate_table_tibero 는 같은 좌표로 원천 Tibero 7 Zeta에 JDBC 직조회(LIMIT 지원). "
         "직조회 전에 set_credentials 가 필요하다. "
         "쓰기는 없고, SELECT 집계(count/sum/avg/max/min)는 된다. "
         "SQL 문자열은 받지 않는다. 한 표 조회는 기존 도구를 쓴다. "
-        "여러 표 결과는 join_tables 가 MCP에서 붙인다. MindsDB 조인을 대신하지 않는다. "
+        "여러 표 결합은 join_tables 가 1단계 마스터 검색 키를 2단계 WHERE IN 절로 주입해 MCP에서 결합한다. "
+        "1단계 대상이 너무 많아 TOO_MANY_CANDIDATES 가 반환되면 즉시 사용자에게 권역이나 명칭을 좁히도록 되물어야 한다. "
         "같은 소스라도 스키마가 다르면 표별로 schema_name 을 쓴다."
     ),
     host=os.environ.get("API_HOST", "0.0.0.0"),
@@ -326,9 +327,10 @@ async def join_tables(
     left_limit: int = 50,
     right_limit: int = 50,
     how: str = "inner",
+    max_in_keys: int = 100,
     ctx: Context | None = None,
 ) -> dict:
-    """두 표를 각 경로로 조회한 뒤 MCP에서 붙인다. 엔진에 JOIN SQL을 보내지 않는다. via는 mindsdb, pg, tibero."""
+    """1단계 마스터(left) 조건 검색 키를 2단계 팩트(right) WHERE IN 절에 주입해 MCP에서 결합한다. 키 개수가 max_in_keys(기본 100)를 초과하면 TOO_MANY_CANDIDATES를 반환하여 조건을 좁히도록 유도한다."""
     return await tools.join_tables(
         _runtime(),
         _store(ctx),
@@ -350,6 +352,7 @@ async def join_tables(
             "right_filters": right_filters,
             "right_limit": right_limit,
             "how": how,
+            "max_in_keys": max_in_keys,
         },
     )
 

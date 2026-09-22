@@ -155,3 +155,119 @@ def test_join_tables_assembles_after_two_fetches(monkeypatch):
     assert payload["left"]["via"] == "mindsdb-query_execute"
     assert payload["right"]["via"] == "postgres-direct"
     assert payload["items"][0]["left"]["name"] == "b"
+
+
+def test_join_tables_injects_where_in_to_right(monkeypatch):
+    settings = Settings(
+        api_keys=("k",),
+        stone_meta_url="http://stone",
+        robo_meta_url="http://stone",
+        nk_backend_url="http://nk",
+        nk_backend_token="",
+    )
+    captured_right_filters = []
+
+    async def fake_query(_settings, _store, args):
+        name = args["table_name"]
+        if name == "master_t":
+            return {
+                "source_name": args["source_name"],
+                "schema_name": args["schema_name"],
+                "table_name": name,
+                "engine": "postgres",
+                "via": "mindsdb-query_execute",
+                "items": [{"code": "S01", "name": "팔당"}, {"code": "S02", "name": "성남"}],
+            }
+        captured_right_filters.extend(args.get("filters") or [])
+        return {
+            "source_name": args["source_name"],
+            "schema_name": args["schema_name"],
+            "table_name": name,
+            "engine": "postgres",
+            "via": "postgres-direct",
+            "items": [{"site_cd": "S01", "turbidity": 0.12}],
+        }
+
+    monkeypatch.setattr("app.tools.query_table", fake_query)
+    monkeypatch.setattr("app.tools.query_table_pg", fake_query)
+
+    payload = asyncio.run(
+        join_tables(
+            settings,
+            store=None,
+            args={
+                "left_source_name": "SRC_A",
+                "left_schema_name": "s1",
+                "left_table_name": "master_t",
+                "left_on": "code",
+                "left_via": "mindsdb",
+                "right_source_name": "SRC_B",
+                "right_schema_name": "s2",
+                "right_table_name": "fact_t",
+                "right_on": "site_cd",
+                "right_via": "pg",
+            },
+        )
+    )
+    assert payload["status"] == "SUCCESS"
+    assert payload["row_count"] == 1
+    # 2단계 쿼리의 filters에 code in ['S01', 'S02']가 정상 주입되었는지 검증
+    assert len(captured_right_filters) == 1
+    assert captured_right_filters[0] == {"column": "site_cd", "op": "in", "value": ["S01", "S02"]}
+
+
+def test_join_tables_returns_too_many_candidates(monkeypatch):
+    settings = Settings(
+        api_keys=("k",),
+        stone_meta_url="http://stone",
+        robo_meta_url="http://stone",
+        nk_backend_url="http://nk",
+        nk_backend_token="",
+    )
+    right_called = False
+
+    async def fake_query(_settings, _store, args):
+        nonlocal right_called
+        name = args["table_name"]
+        if name == "master_t":
+            # 5개의 다른 키를 반환
+            return {
+                "source_name": args["source_name"],
+                "schema_name": args["schema_name"],
+                "table_name": name,
+                "engine": "postgres",
+                "via": "mindsdb-query_execute",
+                "items": [{"code": f"S0{i}"} for i in range(5)],
+            }
+        right_called = True
+        return {"items": []}
+
+    monkeypatch.setattr("app.tools.query_table", fake_query)
+    monkeypatch.setattr("app.tools.query_table_pg", fake_query)
+
+    # max_in_keys를 3으로 제한
+    payload = asyncio.run(
+        join_tables(
+            settings,
+            store=None,
+            args={
+                "left_source_name": "SRC_A",
+                "left_schema_name": "s1",
+                "left_table_name": "master_t",
+                "left_on": "code",
+                "left_via": "mindsdb",
+                "right_source_name": "SRC_B",
+                "right_schema_name": "s2",
+                "right_table_name": "fact_t",
+                "right_on": "site_cd",
+                "right_via": "pg",
+                "max_in_keys": 3,
+            },
+        )
+    )
+    assert payload["status"] == "TOO_MANY_CANDIDATES"
+    assert payload["candidate_count"] == 5
+    assert payload["threshold"] == 3
+    assert not right_called
+    assert "안전 상한(3건)을 초과" in payload["message"]
+

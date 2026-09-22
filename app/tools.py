@@ -912,14 +912,69 @@ async def join_tables(
         raise QueryError(str(exc)) from exc
 
     left_args = _side_args("left", args, left_on)
-    right_args = _side_args("right", args, right_on)
     left = await _query_via(settings, store, left_via, left_args)
-    right = await _query_via(settings, store, right_via, right_args)
+    left_items = list(left.get("items") or [])
+
+    max_in_keys = int(args.get("max_in_keys") or 100)
+
+    if not left_items:
+        return {
+            "via": VIA_ASSEMBLE,
+            "how": how,
+            "status": "NO_CANDIDATES",
+            "message": "1단계(left) 마스터/코드 테이블에서 일치하는 행을 찾지 못했습니다.",
+            "left": {
+                **{key: left.get(key) for key in ("source_name", "schema_name", "table_name", "engine", "via")},
+                "on": left_on,
+                "fetched": 0,
+            },
+            "right": None,
+            "row_count": 0,
+            "items": [],
+        }
+
+    # 단일 조인 키인 경우 WHERE IN 자동 주입 전략 적용
+    if len(left_on) == 1 and len(right_on) == 1:
+        extracted_keys = assemble.extract_distinct_keys(left_items, left_on[0])
+        if len(extracted_keys) > max_in_keys:
+            return {
+                "via": VIA_ASSEMBLE,
+                "how": how,
+                "status": "TOO_MANY_CANDIDATES",
+                "candidate_count": len(extracted_keys),
+                "threshold": max_in_keys,
+                "sample_candidates": extracted_keys[:5],
+                "message": (
+                    f"1단계 마스터 검색 결과 조인 키 '{left_on[0]}'의 대상이 {len(extracted_keys)}건으로 "
+                    f"안전 상한({max_in_keys}건)을 초과했습니다. "
+                    "WHERE IN 절 과부하를 방지하기 위해 2단계 조회를 중단합니다. "
+                    "사용자에게 권역(지사), 시설명 등 조건을 구체화하여 범위를 좁히도록 되물어보세요."
+                ),
+                "left": {
+                    **{key: left.get(key) for key in ("source_name", "schema_name", "table_name", "engine", "via")},
+                    "on": left_on,
+                    "fetched": len(left_items),
+                },
+                "right": None,
+                "row_count": 0,
+                "items": [],
+            }
+
+        right_args = _side_args("right", args, right_on)
+        existing_filters = list(right_args.get("filters") or [])
+        in_filter = {"column": right_on[0], "op": "in", "value": extracted_keys}
+        right_args["filters"] = [*existing_filters, in_filter]
+        right = await _query_via(settings, store, right_via, right_args)
+    else:
+        right_args = _side_args("right", args, right_on)
+        right = await _query_via(settings, store, right_via, right_args)
+
+    right_items = list(right.get("items") or [])
 
     try:
         items = assemble.join_rows(
-            list(left.get("items") or []),
-            list(right.get("items") or []),
+            left_items,
+            right_items,
             left_on=left_on,
             right_on=right_on,
             how=how,
@@ -939,15 +994,16 @@ async def join_tables(
     return {
         "via": VIA_ASSEMBLE,
         "how": how,
+        "status": "SUCCESS",
         "left": {
             **{key: left.get(key) for key in ("source_name", "schema_name", "table_name", "engine", "via")},
             "on": left_on,
-            "fetched": len(left.get("items") or []),
+            "fetched": len(left_items),
         },
         "right": {
             **{key: right.get(key) for key in ("source_name", "schema_name", "table_name", "engine", "via")},
             "on": right_on,
-            "fetched": len(right.get("items") or []),
+            "fetched": len(right_items),
         },
         "row_count": len(items),
         "items": items,

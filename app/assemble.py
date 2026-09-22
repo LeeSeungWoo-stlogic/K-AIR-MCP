@@ -24,6 +24,22 @@ def normalize_on(raw: Any) -> list[str]:
     return keys
 
 
+def extract_distinct_keys(rows: list[dict[str, Any]], column: str) -> list[Any]:
+    """행 목록에서 특정 컬럼의 고유 값(None 제외)을 순서를 보존하며 추출한다."""
+    seen = set()
+    result: list[Any] = []
+    col_lower = str(column).strip().lower()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        lower_map = {str(k).lower(): v for k, v in row.items()}
+        val = lower_map.get(col_lower)
+        if val is not None and val not in seen:
+            seen.add(val)
+            result.append(val)
+    return result
+
+
 def join_key(row: dict[str, Any], columns: list[str]) -> tuple[Any, ...] | None:
     values: list[Any] = []
     lower = {str(name).lower(): value for name, value in row.items()}
