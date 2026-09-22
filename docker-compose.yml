@@ -20,7 +20,7 @@ services:
       ROBO_META_URL: "${ROBO_META_URL:-http://stone-meta-api:8096}"
       NK_BACKEND_URL: "${NK_BACKEND_URL:-http://nk-backend:8000}"
       MCP_API_KEYS: "${MCP_API_KEYS:?MCP_API_KEYS is required}"
-      MCP_ROW_LIMIT: "${MCP_ROW_LIMIT:-200}"
+      MCP_ROW_LIMIT: "${MCP_ROW_LIMIT:-10000}"
       TIBERO_JDBC_JAR: "/opt/tibero/jdbc/tibero-jdbc.jar"
     extra_hosts:
       - "host.docker.internal:host-gateway"

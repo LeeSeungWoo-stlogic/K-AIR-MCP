@@ -29,7 +29,7 @@ class Settings:
     robo_meta_url: str
     nk_backend_url: str
     nk_backend_token: str
-    row_limit: int = 200
+    row_limit: int = 10000
     api_host: str = "0.0.0.0"
     api_port: int = 8111
     statement_timeout_ms: int = 60000
@@ -40,7 +40,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    limit_raw = (os.environ.get("MCP_ROW_LIMIT") or "1000").strip()
+    limit_raw = (os.environ.get("MCP_ROW_LIMIT") or "10000").strip()
     try:
         row_limit = int(limit_raw)
     except ValueError as exc:

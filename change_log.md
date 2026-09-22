@@ -20,7 +20,7 @@ K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내�
 
 ### WHERE IN 조회 상한 완화 및 `join_tables` limit 자동 연동
 
-- 기본 `MCP_ROW_LIMIT`을 200에서 1,000으로 상향하여 tagsn 등 대량 옵션 추출 지원.
+- 기본 `MCP_ROW_LIMIT`을 200에서 10,000으로 상향하여 시계열 계측 데이터 등 대량 데이터 조회 지원 (컨테이너 환경변수로 자유 조정 가능).
 - `join_tables` 1단계 `left_limit`을 `max_in_keys`와 자동 연동 (생략/미달 시 최소 `max_in_keys` 이상 확보).
 - `join_tables` 2단계 `right_limit` 미지정 시 추출 키 수 및 `row_limit` 고려 자동 할당.
 
