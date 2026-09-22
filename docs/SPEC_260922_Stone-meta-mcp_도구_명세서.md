@@ -1,11 +1,11 @@
-# Stone-meta-mcp 도구 명세서 (구 KAIR-MCP)
+# Stone-meta-mcp 도구 명세서
 
 **작성일:** 2026-09-22  
 **대상 서비스 / 모듈:** `Stone-meta-mcp` (`c:\Users\LSW\Documents\GitHub\K-AIR-Stone\stone-meta-mcp` 및 `c:\Users\LSW\Documents\GitHub\K-AIR-MCP`)  
 **서버 명칭:** `stone-meta-mcp` (구 `kair-mcp`)  
 **전송 방식:** Streamable HTTP (`/mcp`, `X-Api-Key` 또는 `Authorization: Bearer <KEY>`) 및 stdio 지원  
 **연계 백엔드:** `stone-meta-api` (버전 1.0, 포트 `:8096` / `:8111`)  
-**문서 위치:** `docs/SPEC_260922_KAIR_MCP_도구_명세서.md`  
+**문서 위치:** `docs/SPEC_260922_Stone-meta-mcp_도구_명세서.md`  
 
 ---
 

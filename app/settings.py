@@ -40,7 +40,7 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    limit_raw = (os.environ.get("MCP_ROW_LIMIT") or "200").strip()
+    limit_raw = (os.environ.get("MCP_ROW_LIMIT") or "1000").strip()
     try:
         row_limit = int(limit_raw)
     except ValueError as exc:

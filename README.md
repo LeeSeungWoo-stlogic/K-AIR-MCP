@@ -59,7 +59,7 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 | `set_credentials` | 직조회용 id/pw. **이 API Key 범위**에만 두고 `MCP_CREDENTIALS_TTL_S` 뒤 만료. 결과에 비밀번호 없음 |
 | `clear_credentials` | 이 API Key 범위의 계정만 삭제. env 기본값·다른 키는 그대로 |
 
-행 상한은 `MCP_ROW_LIMIT`(기본 200). `filters.op`: eq, ne, gt, gte, lt, lte, like, in, is_null, is_not_null. PG 직조회는 `/meta/table`의 컬럼 형(date, timestamp, numeric 등)에 맞춰 필터 값을 서버에서 변환한다.
+행 상한은 `MCP_ROW_LIMIT`(기본 1000). `filters.op`: eq, ne, gt, gte, lt, lte, like, in, is_null, is_not_null. PG 직조회는 `/meta/table`의 컬럼 형(date, timestamp, numeric 등)에 맞춰 필터 값을 서버에서 변환한다.
 
 ## 실행 경로
 
@@ -152,7 +152,7 @@ stdio는 `docker exec`마다 새 프로세스라 HTTP 서버와 계정 저장소
 | `ROBO_META_URL` | | `STONE_META_URL`이 비면 이 값을 씀 |
 | `NK_BACKEND_URL` | `http://nk-backend:8000` (compose) | 데이터소스 목록. 직조회용 |
 | `NK_BACKEND_TOKEN` | 빈 값 | 데이터소스 API Bearer |
-| `MCP_ROW_LIMIT` | `200` | 행 상한 |
+| `MCP_ROW_LIMIT` | `1000` | 행 상한 |
 | `MCP_STATEMENT_TIMEOUT_MS` | `60000` | 직조회 문장 한도. PG `statement_timeout`, Tibero `setQueryTimeout`, MindsDB `timeout_s`(최대 120초) |
 | `MCP_DIRECT_MAX_CONCURRENCY` | `4` | PG·Tibero 직조회 공용 동시 실행 수. 슬롯 대기도 문장 한도까지만 |
 | `MCP_CREDENTIALS_TTL_S` | `28800` | `set_credentials` 계정 유효 시간(초) |

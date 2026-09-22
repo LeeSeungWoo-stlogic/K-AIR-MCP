@@ -271,3 +271,65 @@ def test_join_tables_returns_too_many_candidates(monkeypatch):
     assert not right_called
     assert "안전 상한(3건)을 초과" in payload["message"]
 
+
+def test_join_tables_auto_scales_left_limit_to_max_in_keys(monkeypatch):
+    settings = Settings(
+        api_keys=("k",),
+        stone_meta_url="http://stone",
+        robo_meta_url="http://stone",
+        nk_backend_url="http://nk",
+        nk_backend_token="",
+        row_limit=1000,
+    )
+    captured_limits = {}
+
+    async def fake_query(_settings, _store, args):
+        name = args["table_name"]
+        captured_limits[name] = args.get("limit")
+        if name == "master_t":
+            return {
+                "source_name": args["source_name"],
+                "schema_name": args["schema_name"],
+                "table_name": name,
+                "engine": "postgres",
+                "via": "mindsdb-query_execute",
+                "items": [{"code": f"T{i}"} for i in range(150)],
+            }
+        return {
+            "source_name": args["source_name"],
+            "schema_name": args["schema_name"],
+            "table_name": name,
+            "engine": "postgres",
+            "via": "postgres-direct",
+            "items": [],
+        }
+
+    monkeypatch.setattr("app.tools.query_table", fake_query)
+    monkeypatch.setattr("app.tools.query_table_pg", fake_query)
+
+    # max_in_keys를 300으로 주고 left_limit을 생략한 경우
+    payload = asyncio.run(
+        join_tables(
+            settings,
+            store=None,
+            args={
+                "left_source_name": "SRC_A",
+                "left_schema_name": "s1",
+                "left_table_name": "master_t",
+                "left_on": "code",
+                "left_via": "mindsdb",
+                "right_source_name": "SRC_B",
+                "right_schema_name": "s2",
+                "right_table_name": "fact_t",
+                "right_on": "site_cd",
+                "right_via": "pg",
+                "max_in_keys": 300,
+            },
+        )
+    )
+    # 1단계 left_limit이 max_in_keys(300)로 자동 연동되어 150건 모두 추출 및 성공
+    assert captured_limits["master_t"] == 300
+    assert payload["status"] == "SUCCESS"
+    assert payload["left"]["fetched"] == 150
+
+

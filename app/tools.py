@@ -911,11 +911,23 @@ async def join_tables(
     except assemble.AssembleError as exc:
         raise QueryError(str(exc)) from exc
 
+    max_in_keys = int(args.get("max_in_keys") or 100)
+
     left_args = _side_args("left", args, left_on)
+    # [방안 3] 1단계(left) 조회 limit을 max_in_keys와 자동 연동:
+    # 1단계 마스터 검색에서 max_in_keys만큼의 키 후보를 충분히 확보할 수 있도록,
+    # left_limit이 명시되지 않았거나 max_in_keys보다 작으면 최소 max_in_keys 이상으로 자동 확장
+    raw_left_limit = left_args.get("limit")
+    if raw_left_limit is not None:
+        try:
+            left_args["limit"] = max(int(raw_left_limit), max_in_keys)
+        except (TypeError, ValueError):
+            left_args["limit"] = max(50, max_in_keys)
+    else:
+        left_args["limit"] = max(50, max_in_keys)
+
     left = await _query_via(settings, store, left_via, left_args)
     left_items = list(left.get("items") or [])
-
-    max_in_keys = int(args.get("max_in_keys") or 100)
 
     if not left_items:
         return {
@@ -961,6 +973,10 @@ async def join_tables(
             }
 
         right_args = _side_args("right", args, right_on)
+        # 2단계 팩트 테이블 조회 시 right_limit이 지정되지 않았으면,
+        # 추출된 키별 복수 행 조회를 위해 충분한 행수(최대 settings.row_limit) 확보
+        if right_args.get("limit") is None:
+            right_args["limit"] = max(50, min(len(extracted_keys) * 10, settings.row_limit))
         existing_filters = list(right_args.get("filters") or [])
         in_filter = {"column": right_on[0], "op": "in", "value": extracted_keys}
         right_args["filters"] = [*existing_filters, in_filter]
