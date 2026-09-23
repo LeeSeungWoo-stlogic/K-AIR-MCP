@@ -6,6 +6,11 @@ stone-meta는 **별도 전용 이미지**입니다(`K-AIR-Stone/deploy/stone-met
 
 **업데이트 이력:** [`change_log.md`](change_log.md)
 
+## 최근 변경 (2026-09-23)
+
+- **stone-meta GET /health 원천별 메타 갱신일시 연계 규격 반영.** `stone-meta-api`의 `GET /health` 응답에 각 원천별 활성 스냅샷 정보와 메타데이터 갱신 시각(`sources[].updated_at`, `snapshot_id`, `generation`)이 추가됨에 따라 최신 종합명세서([`docs/SPEC_260923_stone-meta-api_종합명세서.md`](docs/SPEC_260923_stone-meta-api_종합명세서.md))를 반영. 상시 전량 조회 대신 갱신 일시 대조를 통한 조건부 증분 동기화 연동 기반을 마련.
+- 상세는 [`change_log.md`](change_log.md) 2026-09-23.
+
 ## 최근 변경 (2026-09-22)
 
 - **Tibero 7 Zeta LIMIT 지원.** 기존 ROWNUM 인라인 뷰 서브쿼리 래핑을 제거하고, Tibero 7 Zeta에서 공식 지원하는 `LIMIT N` 구문을 직접 적용.
@@ -181,7 +186,7 @@ JPype·JDBC는 테스트에서 가짜 객체로 대신합니다. 실제 DB에는
 
 ## 관련
 
-- `stone-meta-api` — 별도 이미지. `POST /meta/catalog`, `/meta/table`, `/meta/ref`, `/query_execute`
+- `stone-meta-api` — 별도 이미지. `GET /health`, `POST /meta/catalog`, `/meta/table`, `/meta/ref`, `/query_execute` ([최신 명세서](docs/SPEC_260923_stone-meta-api_종합명세서.md))
 - `nk-backend` — `GET /air-swmm/data-fabric/api/datasources`. 앱 본체는 그대로 둔다
 - `K-AIR-Stone` — 서빙 카탈로그·표별 `schema_name`, stone-meta 배포
 - `K-AIR-MCP` master — 기존 `kair-query`(robo-meta :8110)

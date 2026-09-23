@@ -2,6 +2,15 @@
 
 K-AIR MCP Analyze 업데이트 이력입니다. 서비스 설명·기능 안내는 [`README.md`](README.md)를 봅니다.
 
+## 2026-09-23
+
+### stone-meta-api GET /health 원천별 메타 갱신일시 연계 규격 반영
+
+- `stone-meta-api`의 `GET /health` 응답에 각 데이터소스별 활성 스냅샷 및 메타데이터 갱신 시각(`sources[].updated_at`, `snapshot_id`, `generation`)이 추가 확장됨에 따라 신규 종합명세서(`docs/SPEC_260923_stone-meta-api_종합명세서.md`)를 반영.
+- 메타데이터 상시 전량 조회(`/meta/*`) 대신, 헬스체크의 `updated_at` 대조를 통한 조건부 증분 동기화 연동 기반 마련.
+
+관련: `docs/SPEC_260923_stone-meta-api_종합명세서.md`
+
 ## 2026-09-22
 
 ### Tibero 7 Zeta LIMIT 문법 적용
